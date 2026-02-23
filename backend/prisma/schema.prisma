@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Caregiver {
+  id             String    @id @default(cuid())
+  nombre         String
+  email          String    @unique
+  telefono       String
+  codigo         String
+  disponibilidad String
+  estado         String    @default("activo")
+  tipoPerfil     String    @default("cuidador")
+  estadoProceso  String    @default("aprobado")
+  provincia      String?
+  zona           String?
+  zonaAmba       String?
+  zonasCobertura String[]  @default([])
+  disponibilidadDias String[] @default([])
+  disponibilidadTurnos String[] @default([])
+  tarifaReferencia Float?
+  avatar         String?
+  cvNombre       String?
+  cvMimeType     String?
+  cvArchivo      String?
+  bio            String?
+  especialidades String[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  pacientes      Patient[] @relation("CaregiverPatients")
+  servicios      Service[] @relation("CaregiverServices")
+  serviceAssignments ServiceAssignment[] @relation("CaregiverServiceAssignments")
+  financeMovements FinanceMovement[] @relation("CaregiverFinanceMovements")
+}
+
+model Patient {
+  id                        String    @id @default(cuid())
+  nombre                    String
+  edad                      Int
+  tipo                      String
+  condicion                 String
+  direccion                 String
+  contactoEmergenciaNombre  String
+  contactoEmergenciaTelefono String
+  acompananteAsignadoId     String?
+  foto                      String?
+  notas                     String?
+  necesidadesEspeciales     String[]
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  acompananteAsignado       Caregiver? @relation("CaregiverPatients", fields: [acompananteAsignadoId], references: [id], onDelete: SetNull)
+  servicios                 Service[]  @relation("PatientServices")
+  financeMovements          FinanceMovement[] @relation("PatientFinanceMovements")
+}
+
+model Service {
+  id               String    @id @default(cuid())
+  fechaInicio      DateTime
+  duracionMinutos  Int       @default(60)
+  repeatMode       String    @default("none")
+  repeatUntil      DateTime?
+  repeatDays       Int[]     @default([])
+  direccion        String?
+  estado           String    @default("pendiente")
+  altaEstado       String    @default("pendiente")
+  altaRealizadaAt  DateTime?
+  notas            String?
+  pacienteId       String
+  cuidadorId       String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  paciente         Patient   @relation("PatientServices", fields: [pacienteId], references: [id], onDelete: Restrict)
+  cuidador         Caregiver @relation("CaregiverServices", fields: [cuidadorId], references: [id], onDelete: Restrict)
+  assignments      ServiceAssignment[]
+  events           ServiceEvent[]
+  payments         ServicePayment[]
+  financeMovements FinanceMovement[] @relation("ServiceFinanceMovements")
+}
+
+model ServiceAssignment {
+  id            String    @id @default(cuid())
+  serviceId     String
+  caregiverId   String?
+  tipo          String    @default("caregiver")
+  rol           String
+  nombreManual  String?
+  activo        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  service       Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  caregiver     Caregiver? @relation("CaregiverServiceAssignments", fields: [caregiverId], references: [id], onDelete: SetNull)
+}
+
+model ServiceEvent {
+  id            String    @id @default(cuid())
+  serviceId     String
+  tipo          String
+  estadoDesde   String?
+  estadoHasta   String?
+  nota          String?
+  createdAt     DateTime  @default(now())
+
+  service       Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+}
+
+model ServicePayment {
+  id            String    @id @default(cuid())
+  serviceId     String
+  year          Int
+  month         Int
+  estado        String    @default("pendiente")
+  monto         Float?
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  service       Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, year, month])
+}
+
+model FinanceMovement {
+  id            String    @id @default(cuid())
+  tipo          String
+  categoria     String?
+  metodo        String
+  monto         Float
+  fecha         DateTime  @default(now())
+  fechaVencimiento DateTime?
+  fechaPago     DateTime?
+  year          Int?
+  month         Int?
+  week          Int?
+  periodType    String    @default("month")
+  estado        String    @default("registrado")
+  registradoPor String?
+  notas         String?
+  patientId     String?
+  caregiverId   String?
+  serviceId     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  patient       Patient?  @relation("PatientFinanceMovements", fields: [patientId], references: [id], onDelete: SetNull)
+  caregiver     Caregiver? @relation("CaregiverFinanceMovements", fields: [caregiverId], references: [id], onDelete: SetNull)
+  service       Service?  @relation("ServiceFinanceMovements", fields: [serviceId], references: [id], onDelete: SetNull)
+}
