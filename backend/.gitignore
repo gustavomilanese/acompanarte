@@ -1,0 +1,10 @@
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Local generated artifacts
+node_modules/
