@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, LogOut, Plus, Trash2 } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { Button } from '@/components/Button';
 import { Card, CardContent } from '@/components/Card';
 import { Modal } from '@/components/Modal';
 import { adminApi } from '@/services/adminApi';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 const METODOS = ['mercado_pago', 'transferencia', 'electronico', 'efectivo'];
 const COBRADORES = ['Gustavo', 'Marina'];
@@ -16,7 +16,6 @@ const TAB_PAGOS = 'pagos';
 export function Finanzas() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
   const { showSuccess, showError } = useToast();
 
   const now = new Date();
@@ -329,12 +328,6 @@ export function Finanzas() {
     [movimientosTotales, rangoPagosDesde, rangoPagosHasta]
   );
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesion cerrada correctamente');
-    navigate('/login');
-  };
-
   const months = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
@@ -391,10 +384,7 @@ export function Finanzas() {
               <p className="text-sm text-slate-500">Cobros y pagos</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={handleLogout}>
-            <LogOut className="w-4 h-4 mr-2" />
-            Cerrar sesion
-          </Button>
+          <AdminQuickMenu />
         </div>
       </header>
 

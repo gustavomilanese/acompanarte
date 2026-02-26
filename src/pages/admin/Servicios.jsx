@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, LogOut, Plus, Clock3, MoreVertical } from 'lucide-react';
+import { ChevronLeft, Plus, Clock3, MoreVertical } from 'lucide-react';
 import { format } from 'date-fns';
-import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/Toast';
 import { Card, CardContent } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { adminApi } from '@/services/adminApi';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 const STATUS_OPTIONS = ['todos', 'en_curso', 'pausado', 'pendiente', 'completado', 'cancelado', 'no_pago'];
 
@@ -82,7 +82,6 @@ function operationsPanelByStatus(status) {
 export function Servicios() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
   const { showSuccess, showError } = useToast();
 
   const [servicios, setServicios] = useState([]);
@@ -310,8 +309,10 @@ export function Servicios() {
         await adminApi.pauseServicioModulo(selectedDetail.id, 'Pausa manual desde ficha');
         showSuccess('Servicio pausado');
       } else {
-        await adminApi.resumeServicioModulo(selectedDetail.id, 'Reanudación manual desde ficha');
-        showSuccess('Servicio reanudado');
+        await adminApi.resumeServicioModulo(selectedDetail.id, selectedDetail.estado === 'pendiente'
+          ? 'Servicio iniciado manualmente desde ficha'
+          : 'Reanudación manual desde ficha');
+        showSuccess(selectedDetail.estado === 'pendiente' ? 'Servicio pasado a en curso' : 'Servicio reanudado');
       }
       await refreshAll();
     } catch (error) {
@@ -365,12 +366,6 @@ export function Servicios() {
     }
   };
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   const handleServicioAction = (action) => {
     if (!selectedDetail || !action) return;
     if (action === 'history') {
@@ -387,6 +382,10 @@ export function Servicios() {
     }
     if (action === 'resume') {
       setConfirmAction({ type: 'resume' });
+      return;
+    }
+    if (action === 'start') {
+      setConfirmAction({ type: 'start' });
       return;
     }
     if (action === 'cancel') {
@@ -417,10 +416,7 @@ export function Servicios() {
               <Clock3 className="w-4 h-4 mr-2" />
               Historial
             </Button>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Cerrar sesión
-            </Button>
+            <AdminQuickMenu />
           </div>
         </div>
       </header>
@@ -512,6 +508,18 @@ export function Servicios() {
                               className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                             >
                               Reanudar servicio
+                            </button>
+                          ) : null}
+                          {selectedDetail.estado === 'pendiente' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleServicioAction('start');
+                                setActionsMenuOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                            >
+                              Pasar a en curso
                             </button>
                           ) : null}
                           {selectedDetail.estado !== 'pausado' && selectedDetail.estado !== 'cancelado' && selectedDetail.estado !== 'completado' ? (
@@ -862,6 +870,8 @@ export function Servicios() {
             ? '¿Querés pausar este servicio?'
             : confirmAction?.type === 'resume'
               ? '¿Querés reanudar este servicio?'
+              : confirmAction?.type === 'start'
+                ? '¿Querés pasar este servicio de pendiente a en curso?'
               : '¿Querés cancelar este servicio?'}
         </p>
         <div className="flex gap-2 mt-4">
@@ -875,6 +885,7 @@ export function Servicios() {
               try {
                 if (confirmAction?.type === 'pause') await pauseOrResume('pause');
                 if (confirmAction?.type === 'resume') await pauseOrResume('resume');
+                if (confirmAction?.type === 'start') await pauseOrResume('resume');
                 if (confirmAction?.type === 'cancel') await cancelServicio();
               } finally {
                 setConfirmAction(null);

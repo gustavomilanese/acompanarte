@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "db:migrate": "prisma migrate dev",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma db push",
     "db:push": "prisma db push",
+    "db:init": "prisma db push",
     "db:seed": "node prisma/seed.js",
     "db:clean-services": "node scripts/clean-services.js",
     "db:backfill-caregiver-zonas": "node scripts/backfill-caregiver-zona-amba.js",

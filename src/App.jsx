@@ -28,10 +28,19 @@ import { BibliotecaAdmin } from '@/pages/admin/BibliotecaAdmin';
 import { Servicios } from '@/pages/admin/Servicios';
 import { Finanzas } from '@/pages/admin/Finanzas';
 import { ImportarCvs } from '@/pages/admin/ImportarCvs';
+import { Usuarios } from '@/pages/admin/Usuarios';
+
+function normalizeRole(role) {
+  if (role === 'acompanante') return 'cuidador';
+  if (role === 'familiar') return 'paciente';
+  if (role === 'coordinador') return 'admin';
+  return role;
+}
 
 // Componente para proteger rutas
 function ProtectedRoute({ children, allowedRoles }) {
   const { isAuthenticated, user, isLoading } = useAuth();
+  const role = normalizeRole(user?.rol);
 
   if (isLoading) {
     return (
@@ -48,13 +57,13 @@ function ProtectedRoute({ children, allowedRoles }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(user?.rol)) {
+  if (allowedRoles && !allowedRoles.includes(role)) {
     // Redirigir según el rol del usuario
-    if (user?.rol === 'acompanante') {
+    if (role === 'cuidador') {
       return <Navigate to="/" replace />;
-    } else if (user?.rol === 'familiar') {
+    } else if (role === 'paciente') {
       return <Navigate to="/" replace />;
-    } else if (user?.rol === 'admin') {
+    } else if (role === 'admin' || role === 'superadmin') {
       return <Navigate to="/admin" replace />;
     }
     return <Navigate to="/login" replace />;
@@ -65,12 +74,14 @@ function ProtectedRoute({ children, allowedRoles }) {
 
 function RoleBasedHome() {
   const { user } = useAuth();
-  return user?.rol === 'familiar' ? <FamiliarHome /> : <AcompananteDashboard />;
+  const role = normalizeRole(user?.rol);
+  return role === 'paciente' ? <FamiliarHome /> : <AcompananteDashboard />;
 }
 
 function RoleBasedProfile() {
   const { user } = useAuth();
-  return user?.rol === 'acompanante' ? <AcompanantePerfil /> : <FamiliarPerfil />;
+  const role = normalizeRole(user?.rol);
+  return role === 'cuidador' ? <AcompanantePerfil /> : <FamiliarPerfil />;
 }
 
 // Router principal
@@ -84,7 +95,7 @@ function AppRouter() {
       <Route
         path="/"
         element={
-          <ProtectedRoute allowedRoles={['acompanante', 'familiar']}>
+          <ProtectedRoute allowedRoles={['cuidador', 'paciente']}>
             <RoleBasedHome />
           </ProtectedRoute>
         }
@@ -92,7 +103,7 @@ function AppRouter() {
       <Route
         path="/turnos"
         element={
-          <ProtectedRoute allowedRoles={['acompanante']}>
+          <ProtectedRoute allowedRoles={['cuidador']}>
             <MisTurnos />
           </ProtectedRoute>
         }
@@ -100,7 +111,7 @@ function AppRouter() {
       <Route
         path="/turno/:id"
         element={
-          <ProtectedRoute allowedRoles={['acompanante']}>
+          <ProtectedRoute allowedRoles={['cuidador']}>
             <TurnoDetalle />
           </ProtectedRoute>
         }
@@ -108,7 +119,7 @@ function AppRouter() {
       <Route
         path="/registro/:id"
         element={
-          <ProtectedRoute allowedRoles={['acompanante']}>
+          <ProtectedRoute allowedRoles={['cuidador']}>
             <RegistroVisita />
           </ProtectedRoute>
         }
@@ -116,7 +127,7 @@ function AppRouter() {
       <Route
         path="/biblioteca"
         element={
-          <ProtectedRoute allowedRoles={['acompanante']}>
+          <ProtectedRoute allowedRoles={['cuidador']}>
             <Biblioteca />
           </ProtectedRoute>
         }
@@ -124,7 +135,7 @@ function AppRouter() {
       <Route
         path="/perfil"
         element={
-          <ProtectedRoute allowedRoles={['acompanante', 'familiar']}>
+          <ProtectedRoute allowedRoles={['cuidador', 'paciente']}>
             <RoleBasedProfile />
           </ProtectedRoute>
         }
@@ -134,7 +145,7 @@ function AppRouter() {
       <Route
         path="/historial"
         element={
-          <ProtectedRoute allowedRoles={['familiar']}>
+          <ProtectedRoute allowedRoles={['paciente']}>
             <Historial />
           </ProtectedRoute>
         }
@@ -142,7 +153,7 @@ function AppRouter() {
       <Route
         path="/visita/:id"
         element={
-          <ProtectedRoute allowedRoles={['familiar']}>
+          <ProtectedRoute allowedRoles={['paciente']}>
             <DetalleVisita />
           </ProtectedRoute>
         }
@@ -152,7 +163,7 @@ function AppRouter() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <AdminDashboard />
           </ProtectedRoute>
         }
@@ -160,7 +171,7 @@ function AppRouter() {
       <Route
         path="/admin/acompanantes"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <Acompanantes />
           </ProtectedRoute>
         }
@@ -168,7 +179,7 @@ function AppRouter() {
       <Route
         path="/admin/clientes"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <Clientes />
           </ProtectedRoute>
         }
@@ -176,7 +187,7 @@ function AppRouter() {
       <Route
         path="/admin/calendario"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <Calendario />
           </ProtectedRoute>
         }
@@ -184,7 +195,7 @@ function AppRouter() {
       <Route
         path="/admin/servicios"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <Servicios />
           </ProtectedRoute>
         }
@@ -192,7 +203,7 @@ function AppRouter() {
       <Route
         path="/admin/finanzas"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <Finanzas />
           </ProtectedRoute>
         }
@@ -200,7 +211,7 @@ function AppRouter() {
       <Route
         path="/admin/biblioteca-admin"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <BibliotecaAdmin />
           </ProtectedRoute>
         }
@@ -208,8 +219,16 @@ function AppRouter() {
       <Route
         path="/admin/acompanantes/importar"
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
             <ImportarCvs />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/usuarios"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
+            <Usuarios />
           </ProtectedRoute>
         }
       />

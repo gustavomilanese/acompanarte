@@ -32,7 +32,7 @@ import { es } from 'date-fns/locale';
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { toast, showSuccess } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
@@ -72,12 +72,6 @@ export function Dashboard() {
     setShowEmergenciaModal(false);
   };
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   const getClienteInfo = (clienteId) => {
     return getClienteById(clienteId);
   };
@@ -102,8 +96,6 @@ export function Dashboard() {
         subtitle={format(new Date(), "EEEE d 'de' MMMM", { locale: es })}
         user={user}
         showNotifications
-        showLogout
-        onLogout={handleLogout}
       />
 
       <div className="p-4 space-y-4">

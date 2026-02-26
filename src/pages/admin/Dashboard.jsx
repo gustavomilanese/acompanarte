@@ -8,7 +8,6 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   ChevronRight,
-  LogOut,
   Play,
   Plus,
   Check,
@@ -23,6 +22,7 @@ import { Modal } from '@/components/Modal';
 import { Input } from '@/components/Input';
 import { useToast } from '@/components/Toast';
 import { adminApi } from '@/services/adminApi';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 const DURACIONES_HORAS = Array.from({ length: 24 }, (_, i) => i + 1);
 const REPEAT_DAY_OPTIONS = [
@@ -135,7 +135,7 @@ function statusLabel(status) {
 
 export function AdminDashboard() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { toast, showSuccess, showError } = useToast();
 
   const [acompanantes, setAcompanantes] = useState([]);
@@ -736,12 +736,6 @@ export function AdminDashboard() {
       ? PARTIDOS_GBA
       : [];
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   const resetNuevoServicioForm = () => {
     setServiceForm({
       fecha: format(new Date(), 'yyyy-MM-dd'),
@@ -927,21 +921,13 @@ export function AdminDashboard() {
                 <Plus className="w-4 h-4 mr-2" />
                 Nuevo servicio
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
-                onClick={handleLogout}
-              >
-                <LogOut className="w-4 h-4 mr-2" />
-                Cerrar sesión
-              </Button>
+              <AdminQuickMenu />
             </div>
           </div>
         </div>
       </header>
 
-      <div className="relative p-4 max-w-[1640px] mx-auto space-y-12 lg:grid lg:grid-cols-2 lg:gap-x-6 lg:gap-y-14 lg:space-y-0">
+      <div className="relative p-4 max-w-[1640px] mx-auto space-y-8 lg:grid lg:grid-cols-2 lg:gap-x-6 lg:gap-y-8 lg:space-y-0">
         <Card className="order-1 bg-white border border-slate-200 shadow-md rounded-2xl">
           <CardContent>
             <h2 className="text-xl font-bold text-dark mb-4">Resumen operativo</h2>
@@ -1038,7 +1024,7 @@ export function AdminDashboard() {
                 </div>
               </CardContent>
             </Card>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-12">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-12">
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-white shadow-sm p-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Altas por mes</p>
                 <div className="h-32 flex items-end gap-2">
@@ -1144,7 +1130,38 @@ export function AdminDashboard() {
           </CardContent>
         </Card>
 
-        <div className="order-2">
+        <Card className="order-2 lg:hidden bg-white border border-slate-200 shadow-md rounded-2xl">
+          <CardContent>
+            <h3 className="font-semibold text-dark mb-3">Acciones rápidas</h3>
+            <div className="grid grid-cols-1 gap-2">
+              <button
+                type="button"
+                onClick={() => setShowNuevoServicio(true)}
+                className="w-full px-3 py-2 rounded-xl border border-sky-200 bg-sky-50 text-sky-700 text-sm font-semibold"
+              >
+                + Nuevo servicio
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAltasTab('pendientes');
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-sm font-semibold"
+              >
+                Altas pendientes ({altasPendientes.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/finanzas')}
+                className="w-full px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm font-semibold"
+              >
+                Revisar cobros y pagos
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="order-3 lg:order-2">
           <Card className="bg-gradient-to-br from-white via-slate-50 to-slate-100 border border-slate-200 shadow-md rounded-2xl">
             <CardContent>
               <div className="flex items-center justify-between mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -1458,7 +1475,7 @@ export function AdminDashboard() {
 
         </div>
 
-        <div className="order-3 lg:col-span-2 grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="order-4 lg:order-3 lg:col-span-2 grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card
             hover
             onClick={() => navigate('/admin/servicios')}

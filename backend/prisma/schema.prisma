@@ -1,9 +1,10 @@
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -20,16 +21,16 @@ model Caregiver {
   provincia      String?
   zona           String?
   zonaAmba       String?
-  zonasCobertura String[]  @default([])
-  disponibilidadDias String[] @default([])
-  disponibilidadTurnos String[] @default([])
+  zonasCobertura Json
+  disponibilidadDias Json
+  disponibilidadTurnos Json
   tarifaReferencia Float?
   avatar         String?
   cvNombre       String?
   cvMimeType     String?
   cvArchivo      String?
   bio            String?
-  especialidades String[]
+  especialidades Json
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -51,7 +52,7 @@ model Patient {
   acompananteAsignadoId     String?
   foto                      String?
   notas                     String?
-  necesidadesEspeciales     String[]
+  necesidadesEspeciales     Json
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
@@ -66,7 +67,7 @@ model Service {
   duracionMinutos  Int       @default(60)
   repeatMode       String    @default("none")
   repeatUntil      DateTime?
-  repeatDays       Int[]     @default([])
+  repeatDays       Json
   direccion        String?
   estado           String    @default("pendiente")
   altaEstado       String    @default("pendiente")

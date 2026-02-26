@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-  LogOut,
   Plus
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/Card';
@@ -12,8 +11,8 @@ import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
 import { Modal } from '@/components/Modal';
 import { useToast } from '@/components/Toast';
-import { useAuth } from '@/context/AuthContext';
 import { adminApi } from '@/services/adminApi';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 import {
   format,
   startOfMonth,
@@ -180,7 +179,6 @@ const MINUTE_OPTIONS = ['00', '15', '30', '45'];
 export function Calendario() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
   const { showSuccess, showError } = useToast();
 
   const [servicios, setServicios] = useState([]);
@@ -883,12 +881,6 @@ export function Calendario() {
     });
   };
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   const toggleRepeatDay = (day) => {
     setRepeatDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
@@ -1137,10 +1129,7 @@ export function Calendario() {
               >
                 <ChevronRight className="w-5 h-5 text-dark" />
               </button>
-              <Button variant="outline" size="sm" onClick={handleLogout}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Cerrar sesión
-              </Button>
+              <AdminQuickMenu />
             </div>
           </div>
         </div>
