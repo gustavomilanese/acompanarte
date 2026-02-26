@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:api": "npm --prefix backend run dev",
+    "dev:local": "concurrently -n API,WEB -c cyan,magenta \"npm:dev:api\" \"npm:dev\"",
+    "dev:local20": "bash -lc 'source ~/.nvm/nvm.sh && nvm use 20 && npm run dev:local'",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -70,6 +72,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.23",
+    "concurrently": "^9.2.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

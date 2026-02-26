@@ -1,14 +1,48 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL
   || (import.meta.env.PROD ? 'https://api.acompanarte.online' : 'http://localhost:4000')
 
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const method = String(options.method || 'GET').toUpperCase()
+  const canRetry = method === 'GET'
+  const maxAttempts = canRetry ? 4 : 1
+  const retryableStatuses = new Set([429, 502, 503, 504])
+
+  const buildFetchOptions = () => ({
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
+    cache: 'no-store',
     ...options,
   })
+
+  let response = null
+  let lastError = null
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      response = await fetch(`${API_BASE_URL}${path}`, buildFetchOptions())
+      if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
+        await sleep(600 * attempt)
+        continue
+      }
+      break
+    } catch (error) {
+      lastError = error
+      if (attempt < maxAttempts) {
+        await sleep(600 * attempt)
+        continue
+      }
+    }
+  }
+
+  if (!response) {
+    throw new Error(lastError?.message || 'Error de comunicación con el servidor')
+  }
 
   if (response.status === 204) return null
 
@@ -181,6 +215,12 @@ export const adminApi = {
   deleteFinanzasMovimiento(id) {
     return request(`/api/admin/finanzas/movimientos/${id}`, {
       method: 'DELETE',
+    })
+  },
+  submitPublicCaregiverSignup(payload) {
+    return request('/api/public/caregiver-signups', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     })
   },
 }

@@ -1,9 +1,38 @@
-import 'dotenv/config'
+import fs from 'node:fs'
+import path from 'node:path'
+import dotenv from 'dotenv'
 import cors from 'cors'
 import express from 'express'
 import { PrismaClient } from '@prisma/client'
 
-const prisma = new PrismaClient()
+const ENV_FILES = ['.env', '.env.production', '.env.local']
+for (const file of ENV_FILES) {
+  const fullPath = path.join(process.cwd(), file)
+  if (fs.existsSync(fullPath)) {
+    dotenv.config({ path: fullPath, override: false })
+  }
+}
+
+if (!process.env.DATABASE_URL) {
+  const host = process.env.DB_HOST
+  const port = process.env.DB_PORT || '3306'
+  const database = process.env.DB_NAME
+  const user = process.env.DB_USER
+  const pass = process.env.DB_PASSWORD
+  if (host && database && user && pass) {
+    process.env.DATABASE_URL = `mysql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${database}`
+  }
+}
+
+if (!process.env.PRISMA_CLIENT_ENGINE_TYPE) {
+  process.env.PRISMA_CLIENT_ENGINE_TYPE = 'binary'
+}
+
+const DATABASE_URL = String(process.env.DATABASE_URL || '').trim()
+
+const prisma = new PrismaClient({
+  ...(DATABASE_URL ? { datasources: { db: { url: DATABASE_URL } } } : {}),
+})
 const app = express()
 
 const PORT = Number(process.env.PORT || 4000)
@@ -323,6 +352,52 @@ function buildDefaultEmail(nombre, idx = 0) {
   return `${base}-${Date.now()}-${idx}@pendiente.local`
 }
 
+function sanitizeEmail(value = '') {
+  return String(value).trim().toLowerCase()
+}
+
+function isValidEmail(value = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim())
+}
+
+function getRequestIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '')
+    .split(',')[0]
+    .trim()
+  if (forwarded) return forwarded
+  return req.ip || req.socket?.remoteAddress || 'unknown'
+}
+
+const caregiverSignupRateStore = new Map()
+const CAREGIVER_SIGNUP_RATE_WINDOW_MS = 15 * 60 * 1000
+const CAREGIVER_SIGNUP_RATE_MAX = 8
+const CAREGIVER_SIGNUP_ALLOWED_CV_MIME = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+])
+
+function enforceCaregiverSignupRateLimit(req) {
+  const ip = getRequestIp(req)
+  const now = Date.now()
+  const state = caregiverSignupRateStore.get(ip) || { count: 0, startAt: now }
+  if (now - state.startAt > CAREGIVER_SIGNUP_RATE_WINDOW_MS) {
+    state.count = 0
+    state.startAt = now
+  }
+  state.count += 1
+  caregiverSignupRateStore.set(ip, state)
+
+  if (state.count > CAREGIVER_SIGNUP_RATE_MAX) {
+    const error = new Error('Demasiados intentos. Probá de nuevo en unos minutos.')
+    error.status = 429
+    throw error
+  }
+}
+
 function randomCode() {
   return String(Math.floor(1000 + Math.random() * 9000))
 }
@@ -534,6 +609,144 @@ function asyncHandler(handler) {
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
+
+app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
+  enforceCaregiverSignupRateLimit(req)
+
+  const honeypot = String(req.body?.website || '').trim()
+  if (honeypot) {
+    res.status(202).json({ ok: true })
+    return
+  }
+
+  const nombre = String(req.body?.nombre || '').trim()
+  const email = sanitizeEmail(req.body?.email || '')
+  const telefono = sanitizePhone(req.body?.telefono || '')
+  const tipoPerfil = String(req.body?.tipoPerfil || 'cuidador').trim()
+  const provincia = String(req.body?.provincia || '').trim()
+  const zona = String(req.body?.zona || '').trim()
+  const bio = String(req.body?.bio || '').trim()
+  const aceptaTerminos = Boolean(req.body?.aceptaTerminos)
+  const cvNombre = String(req.body?.cvNombre || '').trim()
+  const cvMimeType = String(req.body?.cvMimeType || '').trim().toLowerCase()
+  const cvArchivo = String(req.body?.cvArchivo || '').trim()
+
+  const disponibilidadDias = Array.isArray(req.body?.disponibilidadDias)
+    ? req.body.disponibilidadDias.map((d) => String(d).trim()).filter(Boolean)
+    : []
+  const disponibilidadTurnos = Array.isArray(req.body?.disponibilidadTurnos)
+    ? req.body.disponibilidadTurnos.map((d) => String(d).trim()).filter(Boolean)
+    : []
+  const especialidades = Array.isArray(req.body?.especialidades)
+    ? req.body.especialidades.map((d) => String(d).trim()).filter(Boolean)
+    : []
+  const zonasCobertura = Array.isArray(req.body?.zonasCobertura)
+    ? req.body.zonasCobertura.map((d) => String(d).trim()).filter(Boolean)
+    : []
+  const tarifaReferencia = req.body?.tarifaReferencia !== undefined && req.body?.tarifaReferencia !== null && req.body?.tarifaReferencia !== ''
+    ? Number(req.body.tarifaReferencia)
+    : null
+
+  const missing = []
+  if (!nombre) missing.push('nombre')
+  if (!email) missing.push('email')
+  if (!telefono) missing.push('telefono')
+  if (!provincia) missing.push('provincia')
+  if (!zona) missing.push('zona')
+  if (!tipoPerfil) missing.push('tipoPerfil')
+  if (!disponibilidadTurnos.length) missing.push('disponibilidadTurnos')
+  if (!aceptaTerminos) missing.push('aceptaTerminos')
+
+  if (missing.length) {
+    const error = new Error(`Faltan campos requeridos: ${missing.join(', ')}`)
+    error.status = 400
+    throw error
+  }
+
+  if (!isValidEmail(email)) {
+    const error = new Error('El email no tiene formato válido.')
+    error.status = 400
+    throw error
+  }
+
+  if (telefono.length < 8) {
+    const error = new Error('El teléfono no parece válido.')
+    error.status = 400
+    throw error
+  }
+
+  if ((cvNombre || cvMimeType || cvArchivo) && (!cvNombre || !cvMimeType || !cvArchivo)) {
+    const error = new Error('Para adjuntar CV se requieren nombre, tipo y archivo.')
+    error.status = 400
+    throw error
+  }
+
+  if (cvMimeType && !CAREGIVER_SIGNUP_ALLOWED_CV_MIME.has(cvMimeType)) {
+    const error = new Error('Tipo de archivo no permitido para CV.')
+    error.status = 400
+    throw error
+  }
+
+  if (cvArchivo && cvArchivo.length > 11_000_000) {
+    const error = new Error('El archivo de CV supera el tamaño permitido.')
+    error.status = 400
+    throw error
+  }
+
+  const duplicate = await prisma.caregiver.findFirst({
+    where: {
+      OR: [
+        { email },
+        { telefono },
+      ],
+    },
+    select: { id: true },
+  })
+
+  if (duplicate) {
+    const error = new Error('Ya existe un perfil cargado con ese email o teléfono.')
+    error.status = 409
+    throw error
+  }
+
+  const disponibilidad = [
+    disponibilidadDias.length ? `Días: ${disponibilidadDias.join(', ')}` : '',
+    disponibilidadTurnos.length ? `Turnos: ${disponibilidadTurnos.join(', ')}` : '',
+  ].filter(Boolean).join(' · ') || 'a coordinar'
+
+  const inferredZonaAmba = inferAmbaZoneGroup(provincia, zona)
+
+  const created = await prisma.caregiver.create({
+    data: {
+      nombre,
+      email,
+      telefono,
+      codigo: `POST-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomCode()}`,
+      disponibilidad,
+      estado: 'inactivo',
+      tipoPerfil: normalizeAiTipoPerfil(tipoPerfil),
+      estadoProceso: 'en_evaluacion',
+      provincia,
+      zona,
+      zonaAmba: inferredZonaAmba,
+      zonasCobertura: Array.from(new Set([zona, ...zonasCobertura].filter(Boolean))),
+      disponibilidadDias,
+      disponibilidadTurnos,
+      tarifaReferencia: Number.isFinite(tarifaReferencia) ? tarifaReferencia : null,
+      bio: bio || null,
+      cvNombre: cvNombre || null,
+      cvMimeType: cvMimeType || null,
+      cvArchivo: cvArchivo || null,
+      especialidades,
+    },
+  })
+
+  res.status(201).json({
+    ok: true,
+    id: created.id,
+    message: 'Postulación enviada. Un administrador revisará tus datos.',
+  })
+}))
 
 app.get('/api/admin/acompanantes', asyncHandler(async (_req, res) => {
   const items = await prisma.caregiver.findMany({ orderBy: { nombre: 'asc' } })
@@ -1437,5 +1650,8 @@ app.use((error, _req, res, _next) => {
 })
 
 app.listen(PORT, () => {
+  if (!DATABASE_URL) {
+    console.warn('WARN: DATABASE_URL no está configurada. Las rutas con base de datos van a fallar.')
+  }
   console.log(`API running on http://localhost:${PORT}`)
 })

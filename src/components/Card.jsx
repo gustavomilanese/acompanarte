@@ -25,7 +25,7 @@ export function Card({
   };
 
   const classes = `
-    bg-white rounded-2xl
+    bg-white rounded-2xl w-full min-w-0
     ${paddingStyles[padding]}
     ${shadowStyles[shadow]}
     ${hover ? 'hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer' : ''}

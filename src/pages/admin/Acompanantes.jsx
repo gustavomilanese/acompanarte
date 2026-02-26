@@ -552,8 +552,25 @@ export function Acompanantes() {
           </button>
           <button
             type="button"
+            onClick={async () => {
+              const baseUrl = window.location.origin;
+              const link = `${baseUrl}/postulate-cuidador`;
+              try {
+                await navigator.clipboard.writeText(link);
+                showSuccess('Link público copiado');
+              } catch {
+                showError(`No se pudo copiar. Link: ${link}`);
+              }
+            }}
+            className="text-xs px-3 py-1.5 rounded-full border bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700"
+            title="Copiar link público para postulación"
+          >
+            Link postulación
+          </button>
+          <button
+            type="button"
             onClick={() => navigate('/admin/acompanantes/importar')}
-            className="ml-auto text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
+            className="text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
           >
             <span className="inline-flex items-center gap-1.5">
               <FileUp className="w-3.5 h-3.5" />
@@ -563,7 +580,7 @@ export function Acompanantes() {
           <button
             type="button"
             onClick={() => handleOpenModal()}
-            className="text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
+            className="ml-auto text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
             title="Nuevo acompañante"
           >
             <Plus className="w-4 h-4" />

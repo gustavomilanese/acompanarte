@@ -26,24 +26,24 @@
     
     <title>Acompañarte</title>
     
-    <!-- Register Service Worker -->
+    <!-- Disable legacy Service Worker cache to avoid stale deploys -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-              console.log('[PWA] Service Worker registrado:', registration.scope);
-              
-              // Escuchar mensajes del SW
-              navigator.serviceWorker.addEventListener('message', (event) => {
-                if (event.data.type === 'SYNC_COMPLETE') {
-                  console.log('[PWA]', event.data.message);
-                }
-              });
+          navigator.serviceWorker
+            .getRegistrations()
+            .then((registrations) => Promise.all(registrations.map((reg) => reg.unregister())))
+            .then(() => {
+              if (!window.caches) return null;
+              return caches.keys().then((names) =>
+                Promise.all(
+                  names
+                    .filter((name) => name.startsWith('acompanarte-'))
+                    .map((name) => caches.delete(name)),
+                ),
+              );
             })
-            .catch((error) => {
-              console.log('[PWA] Error al registrar Service Worker:', error);
-            });
+            .catch(() => {});
         });
       }
     </script>

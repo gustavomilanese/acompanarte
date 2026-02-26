@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 
 // Pages
 import { Login } from '@/pages/Login';
+import { PublicCaregiverSignup } from '@/pages/PublicCaregiverSignup';
 
 // Acompañante pages
 import { Dashboard as AcompananteDashboard } from '@/pages/acompanante/Dashboard';
@@ -90,6 +91,7 @@ function AppRouter() {
     <Routes>
       {/* Public routes */}
       <Route path="/login" element={<Login />} />
+      <Route path="/postulate-cuidador" element={<PublicCaregiverSignup />} />
 
       {/* Acompañante routes */}
       <Route
