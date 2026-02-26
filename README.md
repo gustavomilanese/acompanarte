@@ -1,48 +1,45 @@
 # Acompanarte
-Aplicacion de gestion operativa para servicios de acompanamiento, con modulo Admin, calendario, finanzas y base de datos PostgreSQL.
+Aplicacion de gestion operativa para servicios de acompanamiento, con modulo Admin, calendario y finanzas.
 
-## Stack
+## Stack actual
 - Frontend: React + Vite
 - Backend: Node.js + Express
 - ORM: Prisma
-- DB: PostgreSQL
+- DB: MySQL (local para desarrollo, Hostinger en produccion)
 
-## Requisitos
-- Node.js 20.x
+## 1) Requisitos
+- Node.js 20.x o 22.x
 - npm 10+
-- PostgreSQL 16 (local o remoto)
+- MySQL 8 (local, opcional pero recomendado)
 
-## Configuracion local
-1. Instalar dependencias:
+## 2) Estructura de entornos (clave)
+- `backend/.env` -> solo desarrollo local (NO subir a git)
+- Variables de Hostinger -> produccion
+- `.env.production` y `.env.development` -> frontend (Vite)
+
+## 3) Configuracion local (paso a paso)
+### 3.1 Instalar dependencias
 ```bash
 npm install
 npm --prefix backend install
 ```
 
-2. Configurar entorno backend:
-```bash
-cp backend/.env.example backend/.env
+### 3.2 Configurar backend local
+Crear `backend/.env` (si no existe) con:
+```env
+DATABASE_URL=mysql://USER_LOCAL:PASS_LOCAL@127.0.0.1:3306/acompanarte_dev
+PORT=4000
+CORS_ORIGIN=http://localhost:5173,http://localhost:5174
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
 ```
-Editar `backend/.env` con:
-- `DATABASE_URL`
-- `PORT`
-- `CORS_ORIGIN`
-- (opcional) `OPENAI_API_KEY`, `OPENAI_MODEL`
 
-3. Sincronizar esquema DB:
+### 3.3 Aplicar esquema en DB local
 ```bash
 npm --prefix backend run db:push
 ```
 
-4. (Opcional) Seed demo:
-```bash
-npm --prefix backend run db:seed
-```
-Nota: el seed actual puede reemplazar datos de prueba existentes.
-
-## Ejecutar en desarrollo
-En dos terminales:
-
+### 3.4 Ejecutar local
 Terminal 1 (backend):
 ```bash
 npm --prefix backend run dev
@@ -53,13 +50,90 @@ Terminal 2 (frontend):
 npm run dev
 ```
 
-## Scripts utiles
-- `npm run dev` -> frontend
-- `npm run build` -> build frontend
-- `npm --prefix backend run dev` -> backend
-- `npm --prefix backend run db:push` -> aplicar schema Prisma
-- `npm --prefix backend run db:seed` -> datos demo
+### 3.5 Verificacion local
+- `http://localhost:4000/api/health` -> `{"ok":true}`
+- `http://localhost:4000/api/admin/acompanantes` -> lista JSON o `[]`
 
-## Git y seguridad
-- No subir `.env` ni llaves/API keys.
-- Si una key se expone, rotarla inmediatamente.
+## 4) Configuracion de frontend por entorno
+### Desarrollo
+Archivo `.env.development`
+```env
+VITE_API_URL=http://localhost:4000
+```
+
+### Produccion
+Archivo `.env.production`
+```env
+VITE_API_URL=https://api.acompanarte.online
+```
+
+## 5) Deploy a Hostinger (produccion)
+### 5.1 Backend (`api.acompanarte.online`)
+En Hostinger Deployments:
+- Framework: Express
+- Node: 22.x
+- Entry file: `src/server.js`
+- Package manager: npm
+
+Variables de entorno:
+```env
+DATABASE_URL=mysql://...@127.0.0.1:3306/uXXXXXXXX_acompanarte2
+PORT=4000
+CORS_ORIGIN=https://app.acompanarte.online,https://www.app.acompanarte.online
+```
+
+### 5.2 Frontend (`app.acompanarte.online`)
+1. Build local:
+```bash
+npm run build
+```
+2. Subir contenido de `dist/`.
+
+### 5.3 Checks post deploy
+- `https://api.acompanarte.online/api/health` -> `{"ok":true}`
+- `https://api.acompanarte.online/api/admin/acompanantes` -> lista JSON o `[]`
+- Hard refresh frontend (`Cmd+Shift+R`) si hay cache viejo.
+
+## 6) Regla para no romper produccion
+- Nunca usar DB de produccion para pruebas diarias.
+- Trabajar con DB local (`acompanarte_dev`).
+- Deploy solo cuando local este validado.
+- Antes de deploy importante: backup manual.
+
+## 7) Backups
+- Hostinger backups automaticos diarios: habilitados en `api.acompanarte.online`.
+- Recomendado extra: export SQL manual antes de cambios criticos.
+
+## 8) Flujo Git recomendado
+1. Crear rama de trabajo:
+```bash
+git checkout -b codex/nombre-cambio
+```
+2. Commit:
+```bash
+git add .
+git commit -m "feat: descripcion corta"
+git push -u origin codex/nombre-cambio
+```
+3. Merge a `main` cuando este validado.
+
+## 9) Troubleshooting rapido
+### Error `Can't reach database server at 127.0.0.1:3306`
+MySQL local no esta levantado o DB no existe.
+
+### Error `Environment variable not found: DATABASE_URL`
+Falta variable en Hostinger o no se aplico redeploy.
+
+### `health` OK pero endpoints admin fallan
+Backend corre, pero Prisma no conecta a DB.
+
+### Frontend sigue fallando despues de arreglar API
+Cache viejo del service worker. Hacer:
+- DevTools -> Application -> Service Workers -> Unregister
+- Clear site data
+- Hard reload
+
+## 10) Seguridad
+- No commitear secretos.
+- Rotar API keys si se exponen.
+- Mantener `backend/.env` fuera de git.
