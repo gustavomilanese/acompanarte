@@ -43,6 +43,7 @@ export const Input = forwardRef(({
         ref={ref}
         id={inputId}
         type={type}
+        required={required}
         className={`${baseStyles} ${errorStyles} ${className}`}
         aria-invalid={error ? 'true' : 'false'}
         aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}
@@ -114,6 +115,7 @@ export function TextArea({
       <textarea
         id={inputId}
         rows={rows}
+        required={required}
         className={`${baseStyles} ${errorStyles} ${className}`}
         aria-invalid={error ? 'true' : 'false'}
         aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}
@@ -184,6 +186,7 @@ export function Select({
       )}
       <select
         id={inputId}
+        required={required}
         className={`${baseStyles} ${errorStyles} ${className}`}
         aria-invalid={error ? 'true' : 'false'}
         aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}

@@ -7,8 +7,8 @@ import { Input } from '@/components/Input';
 import { useToast } from '@/components/Toast';
 
 const ROLES = {
-  ACOMPANANTE: 'acompanante',
-  FAMILIAR: 'familiar',
+  CUIDADOR: 'cuidador',
+  PACIENTE: 'paciente',
   ADMIN: 'admin',
 };
 
@@ -27,8 +27,8 @@ export function Login() {
   const [isLoading, setIsLoading] = useState(false);
 
   const roles = [
-    { id: ROLES.ACOMPANANTE, label: 'Soy acompañante', icon: Users, color: 'text-primary' },
-    { id: ROLES.FAMILIAR, label: 'Soy familiar', icon: Heart, color: 'text-secondary' },
+    { id: ROLES.CUIDADOR, label: 'Soy cuidador', icon: Users, color: 'text-primary' },
+    { id: ROLES.PACIENTE, label: 'Soy paciente', icon: Heart, color: 'text-secondary' },
     { id: ROLES.ADMIN, label: 'Soy administrador', icon: Shield, color: 'text-dark' },
   ];
 
@@ -51,10 +51,10 @@ export function Login() {
       let result;
 
       switch (selectedRole) {
-        case ROLES.ACOMPANANTE:
+        case ROLES.CUIDADOR:
           result = loginAcompanante(email, code);
           break;
-        case ROLES.FAMILIAR:
+        case ROLES.PACIENTE:
           result = loginFamiliar(code);
           break;
         case ROLES.ADMIN:
@@ -72,10 +72,10 @@ export function Login() {
         // Redirigir según rol
         setTimeout(() => {
           switch (selectedRole) {
-            case ROLES.ACOMPANANTE:
+            case ROLES.CUIDADOR:
               navigate('/');
               break;
-            case ROLES.FAMILIAR:
+            case ROLES.PACIENTE:
               navigate('/');
               break;
             case ROLES.ADMIN:
@@ -95,7 +95,7 @@ export function Login() {
 
   const renderForm = () => {
     switch (selectedRole) {
-      case ROLES.ACOMPANANTE:
+      case ROLES.CUIDADOR:
         return (
           <>
             <Input
@@ -119,7 +119,7 @@ export function Login() {
           </>
         );
       
-      case ROLES.FAMILIAR:
+      case ROLES.PACIENTE:
         return (
           <Input
             label="Código de acceso"

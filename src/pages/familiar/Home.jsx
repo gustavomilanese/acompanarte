@@ -6,18 +6,15 @@ import {
   Calendar, 
   ChevronRight, 
   Activity,
-  User,
-  LogOut
+  User
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Badge } from '@/components/Badge';
-import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { EmptyState } from '@/components/EmptyState';
 import { SkeletonDashboard } from '@/components/Skeleton';
-import { useToast } from '@/components/Toast';
 import { 
   getClienteById, 
   getAcompananteById,
@@ -27,11 +24,11 @@ import {
 import { formatRelativeDate, formatTime } from '@/utils/formatters';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { UserQuickMenu } from '@/components/UserQuickMenu';
 
 export function Home() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
-  const { showSuccess } = useToast();
+  const { user } = useAuth();
   
   const [isLoading, setIsLoading] = useState(true);
   const [cliente, setCliente] = useState(null);
@@ -73,12 +70,6 @@ export function Home() {
     }, 800);
   }, [user?.clienteId]);
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   if (isLoading) {
     return (
       <div className="min-h-screen bg-light pb-20">
@@ -102,13 +93,7 @@ export function Home() {
               {format(new Date(), "EEEE d 'de' MMMM", { locale: es })}
             </p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-            aria-label="Cerrar sesión"
-          >
-            <LogOut className="w-5 h-5 text-white" />
-          </button>
+          <UserQuickMenu />
         </div>
       </div>
 

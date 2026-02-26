@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, ChevronLeft, FileUp, Loader2, LogOut, Trash2 } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import { Bot, ChevronLeft, FileUp, Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { Button } from '@/components/Button';
 import { Card, CardContent } from '@/components/Card';
 import { adminApi } from '@/services/adminApi';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 const PROVINCIAS = ['CABA', 'Buenos Aires', 'Córdoba', 'Santa Fe', 'Mendoza', 'Tucumán', 'Salta', 'San Luis'];
 function guessTipo(text) {
@@ -50,7 +50,6 @@ function arrayBufferToBase64(buffer) {
 
 export function ImportarCvs() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const { showError, showSuccess } = useToast();
   const [rows, setRows] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -193,10 +192,7 @@ export function ImportarCvs() {
               <p className="text-sm text-slate-500">Arrastrá CVs y revisá antes de crear perfiles</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => { logout(); navigate('/login'); }}>
-            <LogOut className="w-4 h-4 mr-2" />
-            Cerrar sesión
-          </Button>
+          <AdminQuickMenu />
         </div>
       </header>
 

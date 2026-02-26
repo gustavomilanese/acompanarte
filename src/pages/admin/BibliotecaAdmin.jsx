@@ -12,8 +12,7 @@ import {
   Palette,
   ChevronLeft,
   Trash2,
-  Edit,
-  LogOut
+  Edit
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/Card';
 import { Button } from '@/components/Button';
@@ -21,9 +20,9 @@ import { Input } from '@/components/Input';
 import { Badge } from '@/components/Badge';
 import { Modal } from '@/components/Modal';
 import { useToast } from '@/components/Toast';
-import { useAuth } from '@/context/AuthContext';
 import { actividades as actividadesData } from '@/data/mockData';
 import { generateId, formatCategoria } from '@/utils/formatters';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 const CATEGORIAS = [
   { id: 'cognitivo', label: 'Cognitivo', icon: Brain },
@@ -40,7 +39,6 @@ const DIFICULTADES = [
 
 export function BibliotecaAdmin() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const { showSuccess } = useToast();
 
   const [actividades, setActividades] = useState(actividadesData);
@@ -162,12 +160,6 @@ export function BibliotecaAdmin() {
     return colors[categoria] || 'bg-gray-100 text-gray-700';
   };
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   return (
     <div className="min-h-screen bg-light">
       {/* Header */}
@@ -183,10 +175,7 @@ export function BibliotecaAdmin() {
               </button>
               <h1 className="text-xl font-bold text-dark">Biblioteca de actividades</h1>
             </div>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Cerrar sesión
-            </Button>
+            <AdminQuickMenu />
           </div>
         </div>
       </header>

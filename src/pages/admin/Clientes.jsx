@@ -7,8 +7,7 @@ import {
   Trash2,
   MapPin,
   ChevronLeft,
-  User,
-  LogOut
+  User
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/Card';
 import { Button } from '@/components/Button';
@@ -16,9 +15,9 @@ import { Input } from '@/components/Input';
 import { Badge } from '@/components/Badge';
 import { Modal } from '@/components/Modal';
 import { useToast } from '@/components/Toast';
-import { useAuth } from '@/context/AuthContext';
 import { adminApi } from '@/services/adminApi';
 import { formatTipoCliente } from '@/utils/formatters';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 function getInitials(nombre = '') {
   return nombre
@@ -40,7 +39,6 @@ function readImageFileAsDataUrl(file) {
 
 export function Clientes() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const { showSuccess, showError } = useToast();
 
   const [clientes, setClientes] = useState([]);
@@ -190,12 +188,6 @@ export function Clientes() {
     return a?.nombre || 'Sin asignar';
   };
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   return (
     <div className="min-h-screen bg-light">
       <header className="bg-white shadow-sm sticky top-0 z-40">
@@ -210,10 +202,7 @@ export function Clientes() {
               </button>
               <h1 className="text-xl font-bold text-dark">Pacientes</h1>
             </div>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Cerrar sesión
-            </Button>
+            <AdminQuickMenu />
           </div>
         </div>
       </header>

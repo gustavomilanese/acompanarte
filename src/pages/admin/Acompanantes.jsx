@@ -9,8 +9,7 @@ import {
   FileUp,
   CheckCircle,
   XCircle,
-  ChevronLeft,
-  LogOut
+  ChevronLeft
 } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
@@ -18,8 +17,8 @@ import { Badge } from '@/components/Badge';
 import { Card, CardContent } from '@/components/Card';
 import { Modal } from '@/components/Modal';
 import { useToast } from '@/components/Toast';
-import { useAuth } from '@/context/AuthContext';
 import { adminApi } from '@/services/adminApi';
+import { AdminQuickMenu } from '@/components/AdminQuickMenu';
 
 const PROVINCIAS_ARG = [
   'CABA',
@@ -204,21 +203,16 @@ function inferZonaAmba(provincia, zona) {
 export function Acompanantes() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
   const { showSuccess, showError } = useToast();
 
   const [acompanantes, setAcompanantes] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('activos');
-  const [filterProvincia, setFilterProvincia] = useState('');
-  const [filterZona, setFilterZona] = useState('');
-  const [filterTipoPerfil, setFilterTipoPerfil] = useState('');
-  const [filterZonaAmba, setFilterZonaAmba] = useState('');
-  const [filterEstadoProceso, setFilterEstadoProceso] = useState('');
-  const [filterEspecialidad, setFilterEspecialidad] = useState('');
+  const [filterZonaAmba, setFilterZonaAmba] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingAcompanante, setEditingAcompanante] = useState(null);
   const [confirmEstadoModal, setConfirmEstadoModal] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const [formData, setFormData] = useState({
     nombre: '',
@@ -244,18 +238,9 @@ export function Acompanantes() {
     especialidades: [],
   });
 
-  const provinciaNormalizadaFiltro = String(filterProvincia || '').trim().toLowerCase();
   const provinciaNormalizadaForm = String(formData.provincia || '').trim().toLowerCase();
-  const esCabaFiltro = provinciaNormalizadaFiltro === 'caba';
-  const esBuenosAiresFiltro = provinciaNormalizadaFiltro === 'buenos aires' || provinciaNormalizadaFiltro === 'provincia de buenos aires';
   const esCabaForm = provinciaNormalizadaForm === 'caba';
   const esBuenosAiresForm = provinciaNormalizadaForm === 'buenos aires' || provinciaNormalizadaForm === 'provincia de buenos aires';
-
-  const opcionesZona = esCabaFiltro
-    ? BARRIOS_CABA
-    : esBuenosAiresFiltro
-      ? PARTIDOS_GBA
-      : [];
 
   const opcionesZonaForm = esCabaForm
     ? BARRIOS_CABA
@@ -269,13 +254,19 @@ export function Acompanantes() {
     const zona = params.get('zona') || '';
     const tipo = params.get('tipo') || '';
     const especialidad = params.get('especialidad') || '';
+    const query = params.get('q') || '';
     const zonaAmba = params.get('zonaAmba') || '';
-    if (provincia) setFilterProvincia(provincia);
-    if (zona) setFilterZona(zona);
-    if (tipo) setFilterTipoPerfil(tipo);
-    if (especialidad) setFilterEspecialidad(especialidad);
-    if (zonaAmba) setFilterZonaAmba(zonaAmba);
-    if (provincia || zona || tipo || especialidad || zonaAmba) {
+    const fallbackQuery = [provincia, zona, tipo, especialidad].filter(Boolean).join(' ');
+    setSearchQuery(query || fallbackQuery);
+    if (zonaAmba) {
+      setFilterZonaAmba(
+        zonaAmba
+          .split(',')
+          .map((z) => z.trim())
+          .filter(Boolean)
+      );
+    }
+    if (provincia || zona || tipo || especialidad || zonaAmba || query) {
       setViewMode('base');
     }
   }, [location.search]);
@@ -299,19 +290,8 @@ export function Acompanantes() {
       if (viewMode === 'activos' && !isActivoAprobado) return false;
       if (viewMode === 'base' && isActivoAprobado) return false;
 
-      if (filterProvincia && (a.provincia || '') !== filterProvincia) return false;
-      if (filterZona && !`${a.zona || ''}`.toLowerCase().includes(filterZona.toLowerCase())) return false;
-      if (filterTipoPerfil && (a.tipoPerfil || '') !== filterTipoPerfil) return false;
       const zonaAmbaActual = a.zonaAmba || inferZonaAmba(a.provincia, a.zona);
-      if (filterZonaAmba && zonaAmbaActual !== filterZonaAmba) return false;
-      if (filterEstadoProceso && (a.estadoProceso || 'aprobado') !== filterEstadoProceso) return false;
-      if (filterEspecialidad) {
-        const special = Array.isArray(a.especialidades) ? a.especialidades.join(' ').toLowerCase() : '';
-        const tipo = (a.tipoPerfil || '').toLowerCase();
-        if (!special.includes(filterEspecialidad.toLowerCase()) && !tipo.includes(filterEspecialidad.toLowerCase())) {
-          return false;
-        }
-      }
+      if (filterZonaAmba.length > 0 && !filterZonaAmba.includes(zonaAmbaActual)) return false;
 
       const text = searchQuery.toLowerCase();
       if (!text) return true;
@@ -319,9 +299,12 @@ export function Acompanantes() {
         a.nombre,
         a.email,
         a.telefono,
+        a.codigo,
         a.zona,
         a.provincia,
         a.tipoPerfil,
+        a.zonaAmba,
+        ZONA_AMBA_OPTIONS.find((z) => z.value === zonaAmbaActual)?.label,
         ...(Array.isArray(a.especialidades) ? a.especialidades : []),
       ]
         .filter(Boolean)
@@ -333,12 +316,7 @@ export function Acompanantes() {
     acompanantes,
     searchQuery,
     viewMode,
-    filterProvincia,
-    filterZona,
-    filterTipoPerfil,
     filterZonaAmba,
-    filterEstadoProceso,
-    filterEspecialidad,
   ]);
 
   const baseParaConteoZonas = useMemo(() => {
@@ -448,13 +426,19 @@ export function Acompanantes() {
     const nextEstado = item.estado === 'activo' ? 'inactivo' : 'activo';
 
     try {
+      if (nextEstado === 'inactivo') {
+        await adminApi.deleteAcompanante(item.id);
+        setAcompanantes((prev) => prev.filter((a) => a.id !== item.id));
+        showSuccess('Acompañante eliminado');
+        return;
+      }
+
       const updated = await adminApi.updateAcompanante(item.id, {
         ...item,
         estado: nextEstado,
       });
-
       setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-      showSuccess(nextEstado === 'inactivo' ? 'Acompañante dado de baja' : 'Acompañante dado de alta');
+      showSuccess('Acompañante dado de alta');
     } catch (error) {
       showError(error.message || 'No se pudo cambiar el estado');
     }
@@ -476,6 +460,7 @@ export function Acompanantes() {
 
   const requestToggleEstado = (item) => {
     const nextEstado = item.estado === 'activo' ? 'inactivo' : 'activo';
+    setDeleteConfirmText('');
     setConfirmEstadoModal({ item, nextEstado });
   };
 
@@ -522,12 +507,6 @@ export function Acompanantes() {
     }
   };
 
-  const handleLogout = () => {
-    logout();
-    showSuccess('Sesión cerrada correctamente');
-    navigate('/login');
-  };
-
   return (
     <div className="min-h-screen bg-light">
       <header className="bg-white shadow-sm sticky top-0 z-40">
@@ -542,10 +521,7 @@ export function Acompanantes() {
               </button>
               <h1 className="text-xl font-bold text-dark">Acompañantes</h1>
             </div>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Cerrar sesión
-            </Button>
+            <AdminQuickMenu />
           </div>
         </div>
       </header>
@@ -574,22 +550,30 @@ export function Acompanantes() {
           >
             Base de datos
           </button>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/acompanantes/importar')}
+            className="ml-auto text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <FileUp className="w-3.5 h-3.5" />
+              Importar CVs
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleOpenModal()}
+            className="text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
+            title="Nuevo acompañante"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
         </div>
 
         <Card className="bg-gradient-to-r from-sky-50 via-white to-indigo-50 border border-sky-200">
           <CardContent>
             <div className="flex items-center justify-between gap-2 mb-2">
               <p className="text-sm font-semibold text-slate-700">Cuidadores por zona</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setFilterZonaAmba('');
-                  setFilterProvincia('');
-                }}
-                className="text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-              >
-                Ver todas
-              </button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {ZONA_AMBA_OPTIONS.map((item) => (
@@ -597,11 +581,14 @@ export function Acompanantes() {
                   key={item.value}
                   type="button"
                   onClick={() => {
-                    setFilterZonaAmba(item.value);
-                    setFilterProvincia(item.value === 'caba' ? 'CABA' : 'Buenos Aires');
+                    setFilterZonaAmba((prev) =>
+                      prev.includes(item.value)
+                        ? prev.filter((z) => z !== item.value)
+                        : [...prev, item.value]
+                    );
                   }}
                   className={`text-left rounded-xl border px-3 py-2 transition-colors ${
-                    filterZonaAmba === item.value
+                    filterZonaAmba.includes(item.value)
                       ? 'bg-indigo-600 text-white border-indigo-600'
                       : 'bg-white border-indigo-200 text-slate-700 hover:bg-indigo-50'
                   }`}
@@ -619,85 +606,18 @@ export function Acompanantes() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-400" />
             <input
               type="text"
-              placeholder="Buscar acompañante..."
+              placeholder="Buscar por zona, barrio, especialidad, nombre o tipo de perfil..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  setFilterZonaAmba([]);
+                }
+              }}
               className="w-full pl-10 pr-4 py-3 bg-white border-2 border-light-300 rounded-xl text-dark"
             />
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => navigate('/admin/acompanantes/importar')}
-            className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
-          >
-            <FileUp className="w-4 h-4 mr-2" />
-            Importar CVs
-          </Button>
-          <Button onClick={() => handleOpenModal()}>
-            <Plus className="w-5 h-5" />
-          </Button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-          <select
-            value={filterProvincia}
-            onChange={(e) => setFilterProvincia(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-light-300 rounded-lg text-sm"
-          >
-            <option value="">Provincia (todas)</option>
-            {PROVINCIAS_ARG.map((prov) => (
-              <option key={prov} value={prov}>{prov}</option>
-            ))}
-          </select>
-          <input
-            list="zonas-predefinidas"
-            value={filterZona}
-            onChange={(e) => setFilterZona(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-light-300 rounded-lg text-sm"
-            placeholder="Zona / Barrio / Partido"
-          />
-          <datalist id="zonas-predefinidas">
-            {opcionesZona.map((z) => (
-              <option key={z} value={z} />
-            ))}
-          </datalist>
-          <select
-            value={filterTipoPerfil}
-            onChange={(e) => setFilterTipoPerfil(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-light-300 rounded-lg text-sm"
-          >
-            <option value="">Tipo perfil (todos)</option>
-            {TIPO_PERFIL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-          <select
-            value={filterZonaAmba}
-            onChange={(e) => setFilterZonaAmba(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-light-300 rounded-lg text-sm"
-          >
-            <option value="">Zona AMBA (todas)</option>
-            {ZONA_AMBA_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-          <select
-            value={filterEstadoProceso}
-            onChange={(e) => setFilterEstadoProceso(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-light-300 rounded-lg text-sm"
-          >
-            <option value="">Estado proceso (todos)</option>
-            {ESTADO_PROCESO_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-          <input
-            value={filterEspecialidad}
-            onChange={(e) => setFilterEspecialidad(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-light-300 rounded-lg text-sm md:col-span-2"
-            placeholder="Especialidad"
-          />
         </div>
 
         <div className="space-y-3">
@@ -824,7 +744,10 @@ export function Acompanantes() {
 
       <Modal
         isOpen={Boolean(confirmEstadoModal)}
-        onClose={() => setConfirmEstadoModal(null)}
+        onClose={() => {
+          setConfirmEstadoModal(null);
+          setDeleteConfirmText('');
+        }}
         title={confirmEstadoModal?.nextEstado === 'inactivo' ? 'Confirmar baja' : 'Confirmar alta'}
         size="sm"
       >
@@ -838,15 +761,37 @@ export function Acompanantes() {
               ? <>¿Querés dar de baja a <strong>{confirmEstadoModal?.item?.nombre}</strong>?</>
               : <>¿Querés dar de alta a <strong>{confirmEstadoModal?.item?.nombre}</strong>?</>}
           </p>
+          {confirmEstadoModal?.nextEstado === 'inactivo' && (
+            <div className="mt-3">
+              <p className="text-xs text-slate-600 mb-1.5">
+                Para confirmar, escribí <strong>ELIMINAR</strong>.
+              </p>
+              <input
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-red-200 bg-white text-sm"
+                placeholder="ELIMINAR"
+              />
+            </div>
+          )}
         </div>
         <div className="flex gap-2 mt-4">
-          <Button type="button" variant="ghost" fullWidth onClick={() => setConfirmEstadoModal(null)}>
+          <Button
+            type="button"
+            variant="ghost"
+            fullWidth
+            onClick={() => {
+              setConfirmEstadoModal(null);
+              setDeleteConfirmText('');
+            }}
+          >
             Cancelar
           </Button>
           <Button
             type="button"
             variant={confirmEstadoModal?.nextEstado === 'inactivo' ? 'danger' : 'primary'}
             fullWidth
+            disabled={confirmEstadoModal?.nextEstado === 'inactivo' && deleteConfirmText.trim().toUpperCase() !== 'ELIMINAR'}
             onClick={async () => {
               try {
                 if (confirmEstadoModal?.item) {
@@ -854,6 +799,7 @@ export function Acompanantes() {
                 }
               } finally {
                 setConfirmEstadoModal(null);
+                setDeleteConfirmText('');
               }
             }}
           >

@@ -1,9 +1,9 @@
 // Service Worker para Acompañarte PWA
 // Estrategia: Cache First, then Network
 
-const CACHE_NAME = 'acompanarte-v1';
-const STATIC_CACHE = 'acompanarte-static-v1';
-const DYNAMIC_CACHE = 'acompanarte-dynamic-v1';
+const CACHE_NAME = 'acompanarte-v2-20260226';
+const STATIC_CACHE = 'acompanarte-static-v2-20260226';
+const DYNAMIC_CACHE = 'acompanarte-dynamic-v2-20260226';
 
 // Archivos estáticos a cachear
 const STATIC_ASSETS = [
@@ -123,15 +123,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Estrategia para navegación (HTML)
+  // Estrategia para navegación (HTML): Network First para evitar servir builds viejos
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html')
-        .then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          return fetch(request);
+      fetch(request)
+        .then((networkResponse) => {
+          const responseToCache = networkResponse.clone();
+          caches.open(DYNAMIC_CACHE)
+            .then((cache) => {
+              cache.put('/index.html', responseToCache);
+            });
+          return networkResponse;
         })
         .catch(() => {
           return caches.match('/index.html');

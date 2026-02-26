@@ -1,5 +1,6 @@
 import React from 'react';
 import { Bell, Menu, ChevronLeft, User, LogOut } from 'lucide-react';
+import { UserQuickMenu } from '@/components/UserQuickMenu';
 
 export function Header({
   title,
@@ -12,6 +13,7 @@ export function Header({
   onNotificationsClick,
   showLogout = false,
   onLogout,
+  showContextMenu = true,
   user,
   className = '',
 }) {
@@ -55,6 +57,7 @@ export function Header({
 
           {/* Right section */}
           <div className="flex items-center gap-2">
+            {showContextMenu && <UserQuickMenu />}
             {showNotifications && (
               <button
                 onClick={onNotificationsClick}

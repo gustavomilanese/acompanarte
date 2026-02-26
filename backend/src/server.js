@@ -7,7 +7,7 @@ const prisma = new PrismaClient()
 const app = express()
 
 const PORT = Number(process.env.PORT || 4000)
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174'
+const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,https://app.acompanarte.online'
 const allowedOrigins = CORS_ORIGIN
   .split(',')
   .map((origin) => origin.trim())
@@ -1422,7 +1422,11 @@ app.use((error, _req, res, _next) => {
   const status = error.status || 500
 
   if (error.code === 'P2002') {
-    return res.status(409).json({ error: 'Ya existe un registro con un valor único repetido.' })
+    const target = Array.isArray(error.meta?.target) ? error.meta.target.join(', ') : null
+    if (target?.includes('email')) {
+      return res.status(409).json({ error: 'Ya existe un cuidador con ese email.' })
+    }
+    return res.status(409).json({ error: `Ya existe un registro con un valor único repetido${target ? ` (${target})` : ''}.` })
   }
 
   if (error.code === 'P2025') {
