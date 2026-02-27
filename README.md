@@ -1,6 +1,33 @@
 # Acompanarte
 Aplicacion de gestion operativa para servicios de acompanamiento, con modulo Admin, calendario y finanzas.
 
+## Flujo corto (el que usas todos los dias)
+### 1) Levantar local (front + api con Node 20)
+```bash
+npm run dev:local20
+```
+
+### 2) Guardar codigo en GitHub
+Si, se puede en una sola linea:
+```bash
+git add . && git commit -m "mensaje" && git push origin main
+```
+
+### 3) Deploy
+- Frontend (`app.acompanarte.online`): automatico por GitHub Actions al hacer push a `main`.
+- Backend (`api.acompanarte.online`): manual por ZIP (Hostinger Node Deployments).
+
+Generar ZIP de backend:
+```bash
+npm run backend:package
+```
+
+Te crea:
+- `backend-deploy.zip` (en la raiz del repo)
+
+Luego subir ese ZIP en Hostinger:
+- `api.acompanarte.online` -> `Deployments` -> `Settings and redeploy` -> `Upload` -> `Save and redeploy`
+
 ## Stack actual
 - Frontend: React + Vite
 - Backend: Node.js + Express
@@ -82,12 +109,14 @@ PORT=4000
 CORS_ORIGIN=https://app.acompanarte.online,https://www.app.acompanarte.online
 ```
 
-### 5.2 Frontend (`app.acompanarte.online`)
-1. Build local:
+Empaquetar backend para subir:
 ```bash
-npm run build
+npm run backend:package
 ```
-2. Subir contenido de `dist/`.
+
+### 5.2 Frontend (`app.acompanarte.online`)
+- No hace falta subir manualmente.
+- Se despliega solo desde GitHub Actions cuando haces push a `main`.
 
 ### 5.3 Checks post deploy
 - `https://api.acompanarte.online/api/health` -> `{"ok":true}`

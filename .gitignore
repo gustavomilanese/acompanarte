@@ -7,6 +7,9 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+*.zip
+backend-deploy.zip
+frontend-dist.zip
 
 # Environment / secrets
 .env
