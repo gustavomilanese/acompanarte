@@ -104,10 +104,13 @@ En Hostinger Deployments:
 
 Variables de entorno:
 ```env
-DATABASE_URL=mysql://...@127.0.0.1:3306/uXXXXXXXX_acompanarte2
-PORT=4000
+DATABASE_URL=mysql://...@DB_HOST_REAL:3306/uXXXXXXXX_acompanarte2
 CORS_ORIGIN=https://app.acompanarte.online,https://www.app.acompanarte.online
 ```
+
+Notas:
+- En Hostinger normalmente no conviene fijar `PORT`; la plataforma lo define.
+- `DB_HOST_REAL` debe ser el host real de MySQL que te da Hostinger. No asumir `127.0.0.1` salvo que Hostinger lo indique explicitamente para esa base.
 
 Empaquetar backend para subir:
 ```bash
@@ -152,6 +155,12 @@ MySQL local no esta levantado o DB no existe.
 
 ### Error `Environment variable not found: DATABASE_URL`
 Falta variable en Hostinger o no se aplico redeploy.
+
+### `503` y en logs solo aparece `postinstall`
+El `postinstall` termino bien, pero eso no significa que `npm start` haya levantado. Revisar el log de runtime:
+- Si aparece `[fatal] startup failed`, fallo el arranque de Node.
+- Si aparece `[startup] database connection failed`, el proceso levanto pero la DB esta mal configurada.
+- Si `PORT` esta fijo manualmente, quitarlo de Hostinger y redeploy.
 
 ### `health` OK pero endpoints admin fallan
 Backend corre, pero Prisma no conecta a DB.

@@ -1,46 +1,100 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 import cors from 'cors'
 import express from 'express'
-import { PrismaClient } from '@prisma/client'
 
 const ENV_FILES = ['.env', '.env.production', '.env.local']
-for (const file of ENV_FILES) {
-  const fullPath = path.join(process.cwd(), file)
-  if (fs.existsSync(fullPath)) {
-    dotenv.config({ path: fullPath, override: false })
+const serverFile = fileURLToPath(import.meta.url)
+const serverDir = path.dirname(serverFile)
+const envSearchDirs = [
+  process.cwd(),
+  serverDir,
+  path.resolve(serverDir, '..'),
+]
+const seenEnvPaths = new Set()
+for (const dir of envSearchDirs) {
+  for (const file of ENV_FILES) {
+    const fullPath = path.resolve(dir, file)
+    if (seenEnvPaths.has(fullPath)) continue
+    seenEnvPaths.add(fullPath)
+    if (fs.existsSync(fullPath)) {
+      dotenv.config({ path: fullPath, override: false })
+    }
   }
 }
 
-if (!process.env.DATABASE_URL) {
-  const host = process.env.DB_HOST
-  const port = process.env.DB_PORT || '3306'
-  const database = process.env.DB_NAME
-  const user = process.env.DB_USER
-  const pass = process.env.DB_PASSWORD
-  if (host && database && user && pass) {
-    process.env.DATABASE_URL = `mysql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${database}`
+function buildDatabaseUrlFromParts() {
+  const host = String(process.env.DB_HOST || '').trim()
+  const port = String(process.env.DB_PORT || '3306').trim()
+  const database = String(process.env.DB_NAME || '').trim()
+  const user = String(process.env.DB_USER || '').trim()
+  const pass = String(process.env.DB_PASSWORD || '').trim()
+
+  if (!host || !database || !user || !pass) return ''
+  return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${database}`
+}
+
+function resolveDatabaseUrl() {
+  const raw = String(process.env.DATABASE_URL || '').trim()
+  if (raw) return raw
+  return buildDatabaseUrlFromParts()
+}
+
+function maskDatabaseUrl(rawUrl) {
+  if (!rawUrl) return ''
+
+  try {
+    const url = new URL(rawUrl)
+    const user = url.username ? decodeURIComponent(url.username) : ''
+    const pass = url.password ? '***' : ''
+    const auth = user ? `${user}${pass ? `:${pass}` : ''}@` : ''
+    const dbName = url.pathname?.replace(/^\//, '') || ''
+    return `${url.protocol}//${auth}${url.hostname}${url.port ? `:${url.port}` : ''}/${dbName}`
+  } catch {
+    return '[invalid DATABASE_URL]'
   }
+}
+
+function resolvePort() {
+  const rawPort = String(process.env.PORT || '').trim()
+  if (!rawPort) return 4000
+
+  const port = Number.parseInt(rawPort, 10)
+  if (Number.isInteger(port) && port > 0) return port
+
+  console.warn(`WARN: PORT inválido (${rawPort}). Se usará 4000.`)
+  return 4000
 }
 
 if (!process.env.PRISMA_CLIENT_ENGINE_TYPE) {
   process.env.PRISMA_CLIENT_ENGINE_TYPE = 'binary'
 }
 
-const DATABASE_URL = String(process.env.DATABASE_URL || '').trim()
+const DATABASE_URL = resolveDatabaseUrl()
+if (DATABASE_URL) {
+  process.env.DATABASE_URL = DATABASE_URL
+}
 
+const { PrismaClient } = await import('@prisma/client')
 const prisma = new PrismaClient({
   ...(DATABASE_URL ? { datasources: { db: { url: DATABASE_URL } } } : {}),
 })
 const app = express()
 
-const PORT = Number(process.env.PORT || 4000)
+const PORT = resolvePort()
+const HOST = String(process.env.HOST || '0.0.0.0').trim() || '0.0.0.0'
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,https://app.acompanarte.online'
 const allowedOrigins = CORS_ORIGIN
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean)
+const dbHealth = {
+  configured: Boolean(DATABASE_URL),
+  connected: false,
+  error: null,
+}
 
 app.use(cors({
   origin(origin, callback) {
@@ -607,7 +661,11 @@ function asyncHandler(handler) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true })
+  const status = dbHealth.configured && !dbHealth.connected && dbHealth.error ? 503 : 200
+  res.status(status).json({
+    ok: status === 200,
+    database: dbHealth,
+  })
 })
 
 app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
@@ -1649,9 +1707,49 @@ app.use((error, _req, res, _next) => {
   return res.status(status).json({ error: error.message || 'Error interno del servidor.' })
 })
 
-app.listen(PORT, () => {
+async function start() {
+  console.log(`[startup] cwd=${process.cwd()}`)
+  console.log(`[startup] env=${process.env.NODE_ENV || 'development'}`)
+  console.log(`[startup] port=${PORT}`)
+  console.log(`[startup] host=${HOST}`)
+
   if (!DATABASE_URL) {
-    console.warn('WARN: DATABASE_URL no está configurada. Las rutas con base de datos van a fallar.')
+    console.warn('[startup] DATABASE_URL no está configurada. Las rutas con base de datos van a fallar.')
+  } else {
+    console.log(`[startup] database=${maskDatabaseUrl(DATABASE_URL)}`)
+    try {
+      await prisma.$queryRaw`SELECT 1`
+      dbHealth.connected = true
+      dbHealth.error = null
+      console.log('[startup] database connection OK')
+    } catch (error) {
+      dbHealth.connected = false
+      dbHealth.error = error.message
+      console.error(`[startup] database connection failed: ${error.message}`)
+    }
   }
-  console.log(`API running on http://localhost:${PORT}`)
+
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`API running on http://${HOST}:${PORT}`)
+  })
+
+  server.on('error', (error) => {
+    console.error('[fatal] server listen failed', error)
+    process.exit(1)
+  })
+}
+
+process.on('unhandledRejection', (error) => {
+  console.error('[fatal] unhandledRejection', error)
+  process.exit(1)
+})
+
+process.on('uncaughtException', (error) => {
+  console.error('[fatal] uncaughtException', error)
+  process.exit(1)
+})
+
+start().catch((error) => {
+  console.error('[fatal] startup failed', error)
+  process.exit(1)
 })

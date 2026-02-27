@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "postinstall": "prisma generate",
+    "postinstall": "node scripts/prisma-generate-safe.js",
     "db:migrate": "prisma db push",
     "db:push": "prisma db push",
     "db:init": "prisma db push",
