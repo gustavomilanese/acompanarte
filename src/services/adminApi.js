@@ -1,64 +1,136 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL
   || (import.meta.env.PROD ? 'https://acompanarte-production.up.railway.app' : 'http://localhost:4000')
+const GET_CACHE_TTL_MS = 30_000
+const responseCache = new Map()
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function clonePayload(value) {
+  if (value === null || value === undefined) return value
+
+  try {
+    return structuredClone(value)
+  } catch {
+    return JSON.parse(JSON.stringify(value))
+  }
+}
+
+function clearRequestCache() {
+  responseCache.clear()
+}
+
 async function request(path, options = {}) {
+  const {
+    useCache = true,
+    forceFresh = false,
+    cacheTtl = GET_CACHE_TTL_MS,
+    ...fetchOptions
+  } = options
   const method = String(options.method || 'GET').toUpperCase()
   const canRetry = method === 'GET'
   const maxAttempts = canRetry ? 4 : 1
   const retryableStatuses = new Set([429, 502, 503, 504])
+  const shouldUseCache = method === 'GET' && useCache
+  const cacheKey = shouldUseCache ? `${method}:${path}` : null
+  const now = Date.now()
+
+  if (shouldUseCache && !forceFresh) {
+    const cached = responseCache.get(cacheKey)
+    if (cached && cached.expiresAt > now) {
+      if (cached.promise) {
+        return cached.promise
+      }
+      return clonePayload(cached.data)
+    }
+  }
 
   const buildFetchOptions = () => ({
     headers: {
       'Content-Type': 'application/json',
-      ...(options.headers || {}),
+      ...(fetchOptions.headers || {}),
     },
     cache: 'no-store',
-    ...options,
+    ...fetchOptions,
   })
 
-  let response = null
-  let lastError = null
+  const requestPromise = (async () => {
+    let response = null
+    let lastError = null
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      response = await fetch(`${API_BASE_URL}${path}`, buildFetchOptions())
-      if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
-        await sleep(600 * attempt)
-        continue
-      }
-      break
-    } catch (error) {
-      lastError = error
-      if (attempt < maxAttempts) {
-        await sleep(600 * attempt)
-        continue
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        response = await fetch(`${API_BASE_URL}${path}`, buildFetchOptions())
+        if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
+          await sleep(600 * attempt)
+          continue
+        }
+        break
+      } catch (error) {
+        lastError = error
+        if (attempt < maxAttempts) {
+          await sleep(600 * attempt)
+          continue
+        }
       }
     }
+
+    if (!response) {
+      throw new Error(lastError?.message || 'Error de comunicación con el servidor')
+    }
+
+    if (response.status === 204) {
+      if (shouldUseCache) {
+        responseCache.set(cacheKey, {
+          data: null,
+          expiresAt: Date.now() + cacheTtl,
+        })
+      } else if (method !== 'GET') {
+        clearRequestCache()
+      }
+      return null
+    }
+
+    let payload = null
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+
+    if (!response.ok) {
+      const message = payload?.error || 'Error de comunicación con el servidor'
+      throw new Error(message)
+    }
+
+    if (shouldUseCache) {
+      responseCache.set(cacheKey, {
+        data: payload,
+        expiresAt: Date.now() + cacheTtl,
+      })
+    } else if (method !== 'GET') {
+      clearRequestCache()
+    }
+
+    return clonePayload(payload)
+  })()
+
+  if (shouldUseCache) {
+    responseCache.set(cacheKey, {
+      promise: requestPromise,
+      expiresAt: now + cacheTtl,
+    })
   }
 
-  if (!response) {
-    throw new Error(lastError?.message || 'Error de comunicación con el servidor')
-  }
-
-  if (response.status === 204) return null
-
-  let payload = null
   try {
-    payload = await response.json()
-  } catch {
-    payload = null
+    return await requestPromise
+  } catch (error) {
+    if (shouldUseCache) {
+      responseCache.delete(cacheKey)
+    }
+    throw error
   }
-
-  if (!response.ok) {
-    const message = payload?.error || 'Error de comunicación con el servidor'
-    throw new Error(message)
-  }
-
-  return payload
 }
 
 export const adminApi = {
@@ -222,6 +294,9 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     })
+  },
+  clearCache() {
+    clearRequestCache()
   },
 }
 
