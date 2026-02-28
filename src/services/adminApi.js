@@ -2,6 +2,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL
   || (import.meta.env.PROD ? 'https://acompanarte-production.up.railway.app' : 'http://localhost:4000')
 const GET_CACHE_TTL_MS = 30_000
 const responseCache = new Map()
+const STORAGE_PREFIX = 'acom-admin-cache:'
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -19,6 +20,52 @@ function clonePayload(value) {
 
 function clearRequestCache() {
   responseCache.clear()
+
+  if (typeof window === 'undefined' || !window.sessionStorage) return
+
+  for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.sessionStorage.key(index)
+    if (key?.startsWith(STORAGE_PREFIX)) {
+      window.sessionStorage.removeItem(key)
+    }
+  }
+}
+
+function getStorageKey(cacheKey) {
+  return `${STORAGE_PREFIX}${cacheKey}`
+}
+
+function readPersistedCache(cacheKey, now) {
+  if (typeof window === 'undefined' || !window.sessionStorage) return null
+
+  try {
+    const raw = window.sessionStorage.getItem(getStorageKey(cacheKey))
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw)
+    if (!parsed || parsed.expiresAt <= now) {
+      window.sessionStorage.removeItem(getStorageKey(cacheKey))
+      return null
+    }
+
+    return parsed.data
+  } catch {
+    window.sessionStorage.removeItem(getStorageKey(cacheKey))
+    return null
+  }
+}
+
+function writePersistedCache(cacheKey, data, expiresAt) {
+  if (typeof window === 'undefined' || !window.sessionStorage) return
+
+  try {
+    window.sessionStorage.setItem(
+      getStorageKey(cacheKey),
+      JSON.stringify({ data, expiresAt }),
+    )
+  } catch {
+    window.sessionStorage.removeItem(getStorageKey(cacheKey))
+  }
 }
 
 async function request(path, options = {}) {
@@ -43,6 +90,15 @@ async function request(path, options = {}) {
         return cached.promise
       }
       return clonePayload(cached.data)
+    }
+
+    const persisted = readPersistedCache(cacheKey, now)
+    if (persisted !== null) {
+      responseCache.set(cacheKey, {
+        data: persisted,
+        expiresAt: now + cacheTtl,
+      })
+      return clonePayload(persisted)
     }
   }
 
@@ -82,10 +138,12 @@ async function request(path, options = {}) {
 
     if (response.status === 204) {
       if (shouldUseCache) {
+        const expiresAt = Date.now() + cacheTtl
         responseCache.set(cacheKey, {
           data: null,
-          expiresAt: Date.now() + cacheTtl,
+          expiresAt,
         })
+        writePersistedCache(cacheKey, null, expiresAt)
       } else if (method !== 'GET') {
         clearRequestCache()
       }
@@ -105,10 +163,12 @@ async function request(path, options = {}) {
     }
 
     if (shouldUseCache) {
+      const expiresAt = Date.now() + cacheTtl
       responseCache.set(cacheKey, {
         data: payload,
-        expiresAt: Date.now() + cacheTtl,
+        expiresAt,
       })
+      writePersistedCache(cacheKey, payload, expiresAt)
     } else if (method !== 'GET') {
       clearRequestCache()
     }
