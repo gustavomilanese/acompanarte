@@ -1,5 +1,5 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL
-  || (import.meta.env.PROD ? 'https://api.acompanarte.online' : 'http://localhost:4000')
+  || (import.meta.env.PROD ? 'https://acompanarte-production.up.railway.app' : 'http://localhost:4000')
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))

@@ -91,7 +91,7 @@ VITE_API_URL=http://localhost:4000
 ### Produccion
 Archivo `.env.production`
 ```env
-VITE_API_URL=https://api.acompanarte.online
+VITE_API_URL=https://acompanarte-production.up.railway.app
 ```
 
 ## 5) Deploy a Hostinger (produccion)
@@ -118,6 +118,11 @@ npm run backend:package
 ```
 
 ### 5.2 Frontend (`app.acompanarte.online`)
+El frontend toma `VITE_API_URL` en build. Si usas GitHub Actions, el workflow ya buildéa con:
+```env
+VITE_API_URL=https://acompanarte-production.up.railway.app
+```
+Tambien puedes definir `VITE_API_URL` como Repository Variable en GitHub si luego cambias la URL del backend.
 - No hace falta subir manualmente.
 - Se despliega solo desde GitHub Actions cuando haces push a `main`.
 
