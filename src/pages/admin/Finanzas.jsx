@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/Toast';
@@ -73,6 +73,8 @@ export function Finanzas() {
   const [rangoPagosHasta, setRangoPagosHasta] = useState(currentMonthValue);
   const [rangoRetirosDesde, setRangoRetirosDesde] = useState(DEFAULT_RANGE_START);
   const [rangoRetirosHasta, setRangoRetirosHasta] = useState(currentMonthValue);
+  const [rangoCajaDesde, setRangoCajaDesde] = useState(DEFAULT_RANGE_START);
+  const [rangoCajaHasta, setRangoCajaHasta] = useState(currentMonthValue);
 
   const [registroModal, setRegistroModal] = useState({
     open: false,
@@ -95,6 +97,7 @@ export function Finanzas() {
   });
   const [cameFromServiciosFlow, setCameFromServiciosFlow] = useState(false);
   const [returnServiceId, setReturnServiceId] = useState('');
+  const dashboardRef = useRef(null);
 
   const loadData = async () => {
     try {
@@ -400,9 +403,23 @@ export function Finanzas() {
     [movimientosTotales, rangoPagosDesde, rangoPagosHasta]
   );
 
+  const pendientePagoAcumulado = useMemo(
+    () => calcularPendiente('pago', rangoPagosDesde, rangoPagosHasta),
+    [movimientosTotales, rangoPagosDesde, rangoPagosHasta]
+  );
+
   const retirosAcumulado = useMemo(
     () => calcularAcumulado('retiro', rangoRetirosDesde, rangoRetirosHasta),
     [movimientosTotales, rangoRetirosDesde, rangoRetirosHasta]
+  );
+
+  const cajaDisponible = useMemo(
+    () => (
+      calcularAcumulado('cobro', rangoCajaDesde, rangoCajaHasta) -
+      calcularAcumulado('pago', rangoCajaDesde, rangoCajaHasta) -
+      calcularAcumulado('retiro', rangoCajaDesde, rangoCajaHasta)
+    ),
+    [movimientosTotales, rangoCajaDesde, rangoCajaHasta]
   );
 
   const months = [
@@ -461,6 +478,18 @@ export function Finanzas() {
     }
   };
 
+  const stopCardNavigation = (e) => {
+    e.stopPropagation();
+  };
+
+  const handleResumenCardClick = (nextTab = null, nextEstado = 'todos') => {
+    if (nextTab) setTab(nextTab);
+    setEstadoFiltro(nextEstado);
+    requestAnimationFrame(() => {
+      dashboardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   return (
     <div className="min-h-screen bg-light">
       <header className="bg-white shadow-sm sticky top-0 z-40">
@@ -479,15 +508,15 @@ export function Finanzas() {
       </header>
 
       <div className="p-4 space-y-4">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
-          <Card>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <Card hover onClick={() => handleResumenCardClick(TAB_COBROS)}>
             <CardContent>
               <p className="text-xs text-slate-500">Cobrado acumulado</p>
               <p className="text-2xl font-bold">${Number(cobradoAcumulado || 0).toLocaleString('es-AR')}</p>
               <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
                 Pendiente de cobro: ${Number(pendienteCobroAcumulado || 0).toLocaleString('es-AR')}
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
                 <input
                   type="month"
                   value={rangoCobrosDesde}
@@ -501,13 +530,17 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
+              <p className="mt-2 text-[11px] text-slate-500">Click para ir al dashboard de cobros</p>
             </CardContent>
           </Card>
-          <Card>
+          <Card hover onClick={() => handleResumenCardClick(TAB_PAGOS)}>
             <CardContent>
               <p className="text-xs text-slate-500">Pagado acumulado</p>
               <p className="text-2xl font-bold">${Number(pagadoAcumulado || 0).toLocaleString('es-AR')}</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+                Pendiente de pago: ${Number(pendientePagoAcumulado || 0).toLocaleString('es-AR')}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
                 <input
                   type="month"
                   value={rangoPagosDesde}
@@ -521,13 +554,14 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
+              <p className="mt-2 text-[11px] text-slate-500">Click para ir al dashboard de pagos</p>
             </CardContent>
           </Card>
-          <Card>
+          <Card hover onClick={() => handleResumenCardClick(TAB_RETIROS)}>
             <CardContent>
               <p className="text-xs text-slate-500">Retiros de socios acumulados</p>
               <p className="text-2xl font-bold">${Number(retirosAcumulado || 0).toLocaleString('es-AR')}</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
                 <input
                   type="month"
                   value={rangoRetirosDesde}
@@ -541,6 +575,29 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
+              <p className="mt-2 text-[11px] text-slate-500">Click para ir al dashboard de retiros</p>
+            </CardContent>
+          </Card>
+          <Card hover onClick={() => handleResumenCardClick(null, 'todos')}>
+            <CardContent>
+              <p className="text-xs text-slate-500">Caja disponible</p>
+              <p className="text-2xl font-bold">${Number(cajaDisponible || 0).toLocaleString('es-AR')}</p>
+              <p className="mt-2 text-xs text-slate-500">Cobrado - pagado - retirado</p>
+              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
+                <input
+                  type="month"
+                  value={rangoCajaDesde}
+                  onChange={(e) => setRangoCajaDesde(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
+                />
+                <input
+                  type="month"
+                  value={rangoCajaHasta}
+                  onChange={(e) => setRangoCajaHasta(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">Click para bajar al dashboard financiero</p>
             </CardContent>
           </Card>
         </div>
@@ -586,76 +643,78 @@ export function Finanzas() {
           </Button>
         </div>
 
-        <Card className="bg-white border border-slate-200">
-          <CardContent>
-            <h3 className="font-semibold text-dark mb-3">{TAB_META[tab].listTitle}</h3>
-            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-              {movimientosFiltrados.map((m) => {
-                const referencia = getReferenciaMovimiento(m);
-                const isCompletado = String(m.estado || '').toLowerCase() !== 'pendiente';
-                const isCobroCompletado = m.tipo === 'cobro' && isCompletado;
+        <div ref={dashboardRef}>
+          <Card className="bg-white border border-slate-200">
+            <CardContent>
+              <h3 className="font-semibold text-dark mb-3">{TAB_META[tab].listTitle}</h3>
+              <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                {movimientosFiltrados.map((m) => {
+                  const referencia = getReferenciaMovimiento(m);
+                  const isCompletado = String(m.estado || '').toLowerCase() !== 'pendiente';
+                  const isCobroCompletado = m.tipo === 'cobro' && isCompletado;
 
-                return (
-                  <div
-                    key={m.id}
-                    className={`rounded-lg border px-3 py-2 ${isCobroCompletado ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-slate-700">
-                        {getNombreMovimiento(m)}
+                  return (
+                    <div
+                      key={m.id}
+                      className={`rounded-lg border px-3 py-2 ${isCobroCompletado ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-700">
+                          {getNombreMovimiento(m)}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEstadoRapido(m)}
+                            className={`text-xs px-2 py-0.5 rounded-full border ${String(m.estado).toLowerCase() === 'pendiente' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'} hover:brightness-95`}
+                            title="Cambiar estado"
+                          >
+                            {m.estado}
+                          </button>
+                          <span className="text-sm font-semibold text-slate-800">
+                            ${Number(m.monto).toLocaleString('es-AR')}
+                          </span>
+                        </div>
+                      </div>
+                      {m.tipo === 'pago' && referencia && (
+                        <p className="text-xs text-slate-600 mt-1">
+                          Corresponde a: {referencia}
+                        </p>
+                      )}
+                      <p className="text-xs text-slate-500 mt-1">
+                        {m.categoria || '-'} · {m.metodo.replace('_', ' ')} · {renderPeriodo(m)}
                       </p>
-                      <div className="flex items-center gap-2">
+                      <p className="text-xs text-slate-500">
+                        Fecha: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
+                        {m.registradoPor ? ` · Registrado por: ${m.registradoPor}` : ''}
+                      </p>
+                      <div className="mt-2 flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => handleToggleEstadoRapido(m)}
-                          className={`text-xs px-2 py-0.5 rounded-full border ${String(m.estado).toLowerCase() === 'pendiente' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'} hover:brightness-95`}
-                          title="Cambiar estado"
+                          onClick={() => openEditarRegistroModal(m)}
+                          className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
                         >
-                          {m.estado}
+                          Editar
                         </button>
-                        <span className="text-sm font-semibold text-slate-800">
-                          ${Number(m.monto).toLocaleString('es-AR')}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMovimiento(m.id)}
+                          className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Eliminar
+                        </button>
                       </div>
                     </div>
-                    {m.tipo === 'pago' && referencia && (
-                      <p className="text-xs text-slate-600 mt-1">
-                        Corresponde a: {referencia}
-                      </p>
-                    )}
-                    <p className="text-xs text-slate-500 mt-1">
-                      {m.categoria || '-'} · {m.metodo.replace('_', ' ')} · {renderPeriodo(m)}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Fecha: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
-                      {m.registradoPor ? ` · Registrado por: ${m.registradoPor}` : ''}
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEditarRegistroModal(m)}
-                        className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteMovimiento(m.id)}
-                        className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        Eliminar
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-              {movimientosFiltrados.length === 0 && (
-                <p className="text-sm text-slate-500">Sin registros cargados.</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                  );
+                })}
+                {movimientosFiltrados.length === 0 && (
+                  <p className="text-sm text-slate-500">Sin registros cargados.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <Modal
