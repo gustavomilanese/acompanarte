@@ -575,7 +575,6 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
-              <p className={`mt-2 text-[11px] ${SUMMARY_CARD_STYLES[TAB_COBROS].hint}`}>Click para ir al dashboard de cobros</p>
             </CardContent>
           </Card>
           <Card
@@ -613,7 +612,6 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
-              <p className={`mt-2 text-[11px] ${SUMMARY_CARD_STYLES[TAB_PAGOS].hint}`}>Click para ir al dashboard de pagos</p>
             </CardContent>
           </Card>
           <Card
@@ -641,7 +639,6 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
-              <p className={`mt-2 text-[11px] ${SUMMARY_CARD_STYLES[TAB_RETIROS].hint}`}>Click para ir al dashboard de retiros</p>
             </CardContent>
           </Card>
           <Card
@@ -670,7 +667,6 @@ export function Finanzas() {
                   className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
                 />
               </div>
-              <p className={`mt-2 text-[11px] ${SUMMARY_CARD_STYLES.caja.hint}`}>Click para bajar al dashboard financiero</p>
             </CardContent>
           </Card>
         </div>
