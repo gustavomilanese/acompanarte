@@ -73,6 +73,7 @@ async function request(path, options = {}) {
     useCache = true,
     forceFresh = false,
     cacheTtl = GET_CACHE_TTL_MS,
+    cloneResponse = true,
     ...fetchOptions
   } = options
   const method = String(options.method || 'GET').toUpperCase()
@@ -89,7 +90,7 @@ async function request(path, options = {}) {
       if (cached.promise) {
         return cached.promise
       }
-      return clonePayload(cached.data)
+      return cloneResponse ? clonePayload(cached.data) : cached.data
     }
 
     const persisted = readPersistedCache(cacheKey, now)
@@ -98,7 +99,7 @@ async function request(path, options = {}) {
         data: persisted,
         expiresAt: now + cacheTtl,
       })
-      return clonePayload(persisted)
+      return cloneResponse ? clonePayload(persisted) : persisted
     }
   }
 
@@ -173,7 +174,7 @@ async function request(path, options = {}) {
       clearRequestCache()
     }
 
-    return clonePayload(payload)
+    return cloneResponse ? clonePayload(payload) : payload
   })()
 
   if (shouldUseCache) {
@@ -196,6 +197,12 @@ async function request(path, options = {}) {
 export const adminApi = {
   getAcompanantes() {
     return request('/api/admin/acompanantes')
+  },
+  getAcompanante(id) {
+    return request(`/api/admin/acompanantes/${id}`, {
+      useCache: false,
+      cloneResponse: false,
+    })
   },
   createAcompanante(data) {
     return request('/api/admin/acompanantes', {
@@ -228,6 +235,12 @@ export const adminApi = {
   },
   getClientes() {
     return request('/api/admin/clientes')
+  },
+  getCliente(id) {
+    return request(`/api/admin/clientes/${id}`, {
+      useCache: false,
+      cloneResponse: false,
+    })
   },
   createCliente(data) {
     return request('/api/admin/clientes', {

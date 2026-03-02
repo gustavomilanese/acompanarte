@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -37,19 +37,8 @@ function readImageFileAsDataUrl(file) {
   });
 }
 
-export function Clientes() {
-  const navigate = useNavigate();
-  const { showSuccess, showError } = useToast();
-
-  const [clientes, setClientes] = useState([]);
-  const [acompanantes, setAcompanantes] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filtroTipo, setFiltroTipo] = useState('todos');
-  const [showModal, setShowModal] = useState(false);
-  const [editingCliente, setEditingCliente] = useState(null);
-  const [confirmDeleteModal, setConfirmDeleteModal] = useState(null);
-
-  const [formData, setFormData] = useState({
+function getEmptyClienteFormData() {
+  return {
     nombre: '',
     edad: '',
     tipo: 'adulto_mayor',
@@ -63,7 +52,39 @@ export function Clientes() {
     foto: '',
     notas: '',
     necesidadesEspeciales: [],
-  });
+  };
+}
+
+function mapClienteToFormData(cliente) {
+  return {
+    nombre: cliente.nombre,
+    edad: cliente.edad,
+    tipo: cliente.tipo,
+    condicion: cliente.condicion,
+    direccion: cliente.direccion,
+    contactoEmergencia: cliente.contactoEmergencia || { nombre: '', telefono: '' },
+    acompananteAsignado: cliente.acompananteAsignado || '',
+    foto: cliente.foto || '',
+    notas: cliente.notas || '',
+    necesidadesEspeciales: cliente.necesidadesEspeciales || [],
+  };
+}
+
+export function Clientes() {
+  const navigate = useNavigate();
+  const { showSuccess, showError } = useToast();
+
+  const [clientes, setClientes] = useState([]);
+  const [acompanantes, setAcompanantes] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState('todos');
+  const [showModal, setShowModal] = useState(false);
+  const [editingCliente, setEditingCliente] = useState(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [confirmDeleteModal, setConfirmDeleteModal] = useState(null);
+  const detailRequestRef = useRef(0);
+
+  const [formData, setFormData] = useState(getEmptyClienteFormData);
 
   useEffect(() => {
     const loadData = async () => {
@@ -91,41 +112,43 @@ export function Clientes() {
     return matchesSearch && matchesTipo;
   });
 
-  const handleOpenModal = (cliente = null) => {
-    if (cliente) {
-      setEditingCliente(cliente);
-      setFormData({
-        nombre: cliente.nombre,
-        edad: cliente.edad,
-        tipo: cliente.tipo,
-        condicion: cliente.condicion,
-        direccion: cliente.direccion,
-        contactoEmergencia: cliente.contactoEmergencia || { nombre: '', telefono: '' },
-        acompananteAsignado: cliente.acompananteAsignado || '',
-        foto: cliente.foto || '',
-        notas: cliente.notas || '',
-        necesidadesEspeciales: cliente.necesidadesEspeciales || [],
-      });
-    } else {
+  const closeModal = () => {
+    detailRequestRef.current += 1;
+    setIsDetailLoading(false);
+    setShowModal(false);
+  };
+
+  const handleOpenModal = async (cliente = null) => {
+    if (!cliente) {
       setEditingCliente(null);
-      setFormData({
-        nombre: '',
-        edad: '',
-        tipo: 'adulto_mayor',
-        condicion: '',
-        direccion: '',
-        contactoEmergencia: {
-          nombre: '',
-          telefono: '',
-        },
-        acompananteAsignado: '',
-        foto: '',
-        notas: '',
-        necesidadesEspeciales: [],
-      });
+      setFormData(getEmptyClienteFormData());
+      setIsDetailLoading(false);
+      setShowModal(true);
+      return;
     }
 
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    setEditingCliente(cliente);
+    setFormData(getEmptyClienteFormData());
+    setIsDetailLoading(true);
     setShowModal(true);
+
+    try {
+      const detail = await adminApi.getCliente(cliente.id);
+      if (detailRequestRef.current !== requestId) return;
+      setEditingCliente(detail);
+      setFormData(mapClienteToFormData(detail));
+    } catch (error) {
+      if (detailRequestRef.current !== requestId) return;
+      setShowModal(false);
+      setEditingCliente(null);
+      showError(error.message || 'No se pudo cargar el paciente');
+    } finally {
+      if (detailRequestRef.current === requestId) {
+        setIsDetailLoading(false);
+      }
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -338,10 +361,16 @@ export function Clientes() {
 
       <Modal
         isOpen={showModal}
-        onClose={() => setShowModal(false)}
+        onClose={closeModal}
         title={editingCliente ? 'Editar paciente' : 'Nuevo paciente'}
         size="lg"
       >
+        {isDetailLoading ? (
+          <div className="py-12 text-center">
+            <p className="text-sm font-medium text-slate-700">Cargando datos del paciente...</p>
+            <p className="text-xs text-slate-500 mt-2">La foto completa se trae solo cuando abrís la edición para evitar bloqueos en la página.</p>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Input
@@ -468,7 +497,7 @@ export function Clientes() {
               type="button"
               variant="ghost"
               fullWidth
-              onClick={() => setShowModal(false)}
+              onClick={closeModal}
             >
               Cancelar
             </Button>
@@ -487,6 +516,7 @@ export function Clientes() {
             </Button>
           </div>
         </form>
+        )}
       </Modal>
     </div>
   );

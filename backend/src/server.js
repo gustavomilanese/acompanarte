@@ -136,6 +136,34 @@ function mapCaregiver(item) {
   }
 }
 
+function mapCaregiverSummary(item) {
+  return {
+    id: item.id,
+    nombre: item.nombre,
+    email: item.email,
+    telefono: item.telefono,
+    codigo: item.codigo,
+    disponibilidad: item.disponibilidad,
+    estado: item.estado,
+    tipoPerfil: item.tipoPerfil || 'cuidador',
+    estadoProceso: item.estadoProceso || 'aprobado',
+    provincia: item.provincia || null,
+    zona: item.zona || null,
+    zonaAmba: item.zonaAmba || null,
+    zonasCobertura: Array.isArray(item.zonasCobertura) ? item.zonasCobertura : [],
+    disponibilidadDias: Array.isArray(item.disponibilidadDias) ? item.disponibilidadDias : [],
+    disponibilidadTurnos: Array.isArray(item.disponibilidadTurnos) ? item.disponibilidadTurnos : [],
+    tarifaReferencia: item.tarifaReferencia ?? null,
+    cvNombre: item.cvNombre || null,
+    hasAvatar: Boolean(item.avatar),
+    hasCvArchivo: Boolean(item.cvArchivo),
+    bio: item.bio,
+    especialidades: item.especialidades,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  }
+}
+
 function mapPatient(item) {
   return {
     id: item.id,
@@ -150,6 +178,27 @@ function mapPatient(item) {
     },
     acompananteAsignado: item.acompananteAsignadoId,
     foto: item.foto,
+    notas: item.notas,
+    necesidadesEspeciales: item.necesidadesEspeciales,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  }
+}
+
+function mapPatientSummary(item) {
+  return {
+    id: item.id,
+    nombre: item.nombre,
+    edad: item.edad,
+    tipo: item.tipo,
+    condicion: item.condicion,
+    direccion: item.direccion,
+    contactoEmergencia: {
+      nombre: item.contactoEmergenciaNombre,
+      telefono: item.contactoEmergenciaTelefono,
+    },
+    acompananteAsignado: item.acompananteAsignadoId,
+    hasFoto: Boolean(item.foto),
     notas: item.notas,
     necesidadesEspeciales: item.necesidadesEspeciales,
     createdAt: item.createdAt,
@@ -808,7 +857,12 @@ app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
 
 app.get('/api/admin/acompanantes', asyncHandler(async (_req, res) => {
   const items = await prisma.caregiver.findMany({ orderBy: { nombre: 'asc' } })
-  res.json(items.map(mapCaregiver))
+  res.json(items.map(mapCaregiverSummary))
+}))
+
+app.get('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
+  const item = await prisma.caregiver.findUniqueOrThrow({ where: { id: req.params.id } })
+  res.json(mapCaregiver(item))
 }))
 
 app.post('/api/admin/acompanantes', asyncHandler(async (req, res) => {
@@ -1004,7 +1058,12 @@ app.delete('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
 
 app.get('/api/admin/clientes', asyncHandler(async (_req, res) => {
   const items = await prisma.patient.findMany({ orderBy: { nombre: 'asc' } })
-  res.json(items.map(mapPatient))
+  res.json(items.map(mapPatientSummary))
+}))
+
+app.get('/api/admin/clientes/:id', asyncHandler(async (req, res) => {
+  const item = await prisma.patient.findUniqueOrThrow({ where: { id: req.params.id } })
+  res.json(mapPatient(item))
 }))
 
 app.post('/api/admin/clientes', asyncHandler(async (req, res) => {

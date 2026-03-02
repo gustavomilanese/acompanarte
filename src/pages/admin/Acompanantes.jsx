@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -200,21 +200,8 @@ function inferZonaAmba(provincia, zona) {
   return ZONA_AMBA_BY_PARTIDO[zonaNorm] || '';
 }
 
-export function Acompanantes() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { showSuccess, showError } = useToast();
-
-  const [acompanantes, setAcompanantes] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState('activos');
-  const [filterZonaAmba, setFilterZonaAmba] = useState([]);
-  const [showModal, setShowModal] = useState(false);
-  const [editingAcompanante, setEditingAcompanante] = useState(null);
-  const [confirmEstadoModal, setConfirmEstadoModal] = useState(null);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
-
-  const [formData, setFormData] = useState({
+function getEmptyAcompananteFormData() {
+  return {
     nombre: '',
     email: '',
     telefono: '',
@@ -236,7 +223,53 @@ export function Acompanantes() {
     cvArchivo: '',
     bio: '',
     especialidades: [],
-  });
+  };
+}
+
+function mapAcompananteToFormData(acompanante) {
+  return {
+    nombre: acompanante.nombre,
+    email: acompanante.email,
+    telefono: acompanante.telefono,
+    codigo: acompanante.codigo,
+    disponibilidad: acompanante.disponibilidad,
+    estado: acompanante.estado,
+    tipoPerfil: acompanante.tipoPerfil || 'cuidador',
+    estadoProceso: acompanante.estadoProceso || 'aprobado',
+    provincia: acompanante.provincia || '',
+    zona: acompanante.zona || '',
+    zonaAmba: acompanante.zonaAmba || inferZonaAmba(acompanante.provincia, acompanante.zona) || '',
+    zonasCobertura: acompanante.zonasCobertura || [],
+    disponibilidadDias: acompanante.disponibilidadDias || [],
+    disponibilidadTurnos: acompanante.disponibilidadTurnos || [],
+    tarifaReferencia: acompanante.tarifaReferencia ?? '',
+    avatar: acompanante.avatar || '',
+    cvNombre: acompanante.cvNombre || '',
+    cvMimeType: acompanante.cvMimeType || '',
+    cvArchivo: acompanante.cvArchivo || '',
+    bio: acompanante.bio || '',
+    especialidades: acompanante.especialidades || [],
+  };
+}
+
+export function Acompanantes() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { showSuccess, showError } = useToast();
+
+  const [acompanantes, setAcompanantes] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState('activos');
+  const [filterZonaAmba, setFilterZonaAmba] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editingAcompanante, setEditingAcompanante] = useState(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [downloadingCvId, setDownloadingCvId] = useState('');
+  const [confirmEstadoModal, setConfirmEstadoModal] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const detailRequestRef = useRef(0);
+
+  const [formData, setFormData] = useState(getEmptyAcompananteFormData);
 
   const provinciaNormalizadaForm = String(formData.provincia || '').trim().toLowerCase();
   const esCabaForm = provinciaNormalizadaForm === 'caba';
@@ -338,59 +371,43 @@ export function Acompanantes() {
     return initial;
   }, [baseParaConteoZonas]);
 
-  const handleOpenModal = (acompanante = null) => {
-    if (acompanante) {
-      setEditingAcompanante(acompanante);
-      setFormData({
-        nombre: acompanante.nombre,
-        email: acompanante.email,
-        telefono: acompanante.telefono,
-        codigo: acompanante.codigo,
-        disponibilidad: acompanante.disponibilidad,
-        estado: acompanante.estado,
-        tipoPerfil: acompanante.tipoPerfil || 'cuidador',
-        estadoProceso: acompanante.estadoProceso || 'aprobado',
-        provincia: acompanante.provincia || '',
-        zona: acompanante.zona || '',
-        zonaAmba: acompanante.zonaAmba || inferZonaAmba(acompanante.provincia, acompanante.zona) || '',
-        zonasCobertura: acompanante.zonasCobertura || [],
-        disponibilidadDias: acompanante.disponibilidadDias || [],
-        disponibilidadTurnos: acompanante.disponibilidadTurnos || [],
-        tarifaReferencia: acompanante.tarifaReferencia ?? '',
-        avatar: acompanante.avatar || '',
-        cvNombre: acompanante.cvNombre || '',
-        cvMimeType: acompanante.cvMimeType || '',
-        cvArchivo: acompanante.cvArchivo || '',
-        bio: acompanante.bio || '',
-        especialidades: acompanante.especialidades || [],
-      });
-    } else {
+  const closeModal = () => {
+    detailRequestRef.current += 1;
+    setIsDetailLoading(false);
+    setShowModal(false);
+  };
+
+  const handleOpenModal = async (acompanante = null) => {
+    if (!acompanante) {
       setEditingAcompanante(null);
-      setFormData({
-        nombre: '',
-        email: '',
-        telefono: '',
-        codigo: '',
-        disponibilidad: 'mañana y tarde',
-        estado: 'activo',
-        tipoPerfil: 'cuidador',
-        estadoProceso: 'aprobado',
-        provincia: '',
-        zona: '',
-        zonaAmba: '',
-        zonasCobertura: [],
-        disponibilidadDias: [],
-        disponibilidadTurnos: [],
-        tarifaReferencia: '',
-        avatar: '',
-        cvNombre: '',
-        cvMimeType: '',
-        cvArchivo: '',
-        bio: '',
-        especialidades: [],
-      });
+      setFormData(getEmptyAcompananteFormData());
+      setIsDetailLoading(false);
+      setShowModal(true);
+      return;
     }
+
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    setEditingAcompanante(acompanante);
+    setFormData(getEmptyAcompananteFormData());
+    setIsDetailLoading(true);
     setShowModal(true);
+
+    try {
+      const detail = await adminApi.getAcompanante(acompanante.id);
+      if (detailRequestRef.current !== requestId) return;
+      setEditingAcompanante(detail);
+      setFormData(mapAcompananteToFormData(detail));
+    } catch (error) {
+      if (detailRequestRef.current !== requestId) return;
+      setShowModal(false);
+      setEditingAcompanante(null);
+      showError(error.message || 'No se pudo cargar el acompañante');
+    } finally {
+      if (detailRequestRef.current === requestId) {
+        setIsDetailLoading(false);
+      }
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -433,8 +450,9 @@ export function Acompanantes() {
         return;
       }
 
+      const current = await adminApi.getAcompanante(item.id);
       const updated = await adminApi.updateAcompanante(item.id, {
-        ...item,
+        ...current,
         estado: nextEstado,
       });
       setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
@@ -446,8 +464,9 @@ export function Acompanantes() {
 
   const aprobarPerfil = async (item) => {
     try {
+      const current = await adminApi.getAcompanante(item.id);
       const updated = await adminApi.updateAcompanante(item.id, {
-        ...item,
+        ...current,
         estado: 'activo',
         estadoProceso: 'aprobado',
       });
@@ -504,6 +523,27 @@ export function Acompanantes() {
       }));
     } catch (error) {
       showError(error.message || 'No se pudo cargar el CV');
+    }
+  };
+
+  const handleDownloadCv = async (acompanante) => {
+    setDownloadingCvId(acompanante.id);
+    try {
+      const detail = await adminApi.getAcompanante(acompanante.id);
+      if (!detail.cvArchivo) {
+        throw new Error('Este acompañante no tiene un CV adjunto.');
+      }
+
+      const link = document.createElement('a');
+      link.href = detail.cvArchivo;
+      link.download = detail.cvNombre || `${detail.nombre}-cv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error) {
+      showError(error.message || 'No se pudo descargar el CV');
+    } finally {
+      setDownloadingCvId('');
     }
   };
 
@@ -703,15 +743,16 @@ export function Acompanantes() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {acompanante.cvArchivo && (
-                      <a
-                        href={acompanante.cvArchivo}
-                        download={acompanante.cvNombre || `${acompanante.nombre}-cv`}
+                    {(acompanante.hasCvArchivo || acompanante.cvArchivo) && (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadCv(acompanante)}
                         className="px-3 py-2 rounded-lg transition-colors text-sm font-medium inline-flex items-center gap-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
                         title="Descargar CV adjunto"
+                        disabled={downloadingCvId === acompanante.id}
                       >
-                        CV
-                      </a>
+                        {downloadingCvId === acompanante.id ? 'Descargando...' : 'CV'}
+                      </button>
                     )}
                     {acompanante.estadoProceso !== 'aprobado' && (
                       <button
@@ -827,10 +868,16 @@ export function Acompanantes() {
 
       <Modal
         isOpen={showModal}
-        onClose={() => setShowModal(false)}
+        onClose={closeModal}
         title={editingAcompanante ? 'Editar acompañante' : 'Nuevo acompañante'}
         size="md"
       >
+        {isDetailLoading ? (
+          <div className="py-12 text-center">
+            <p className="text-sm font-medium text-slate-700">Cargando datos del acompañante...</p>
+            <p className="text-xs text-slate-500 mt-2">Se trae el detalle solo al abrir la edición para evitar que la pantalla se cuelgue.</p>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             label="Nombre completo"
@@ -1019,7 +1066,7 @@ export function Acompanantes() {
               type="button"
               variant="ghost"
               fullWidth
-              onClick={() => setShowModal(false)}
+              onClick={closeModal}
             >
               Cancelar
             </Button>
@@ -1028,6 +1075,7 @@ export function Acompanantes() {
             </Button>
           </div>
         </form>
+        )}
       </Modal>
     </div>
   );
