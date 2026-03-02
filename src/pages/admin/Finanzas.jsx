@@ -566,9 +566,14 @@ export function Finanzas() {
             <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
               {movimientosFiltrados.map((m) => {
                 const referencia = getReferenciaMovimiento(m);
+                const isCompletado = String(m.estado || '').toLowerCase() !== 'pendiente';
+                const isCobroCompletado = m.tipo === 'cobro' && isCompletado;
 
                 return (
-                  <div key={m.id} className="rounded-lg border border-slate-200 px-3 py-2 bg-slate-50">
+                  <div
+                    key={m.id}
+                    className={`rounded-lg border px-3 py-2 ${isCobroCompletado ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium text-slate-700">
                         {getNombreMovimiento(m)}
