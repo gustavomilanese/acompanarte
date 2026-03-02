@@ -1609,6 +1609,7 @@ app.post('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
         await tx.servicePayment.upsert({
           where: { serviceId_year_month: { serviceId: created.serviceId, year: syncYear, month: syncMonth } },
           update: {
+            monto: Number(created.monto || 0),
             estado: String(created.estado).toLowerCase() === 'pendiente' ? 'pendiente' : 'pagado',
             paidAt: String(created.estado).toLowerCase() === 'pendiente' ? null : (created.fechaPago || new Date()),
           },
@@ -1616,6 +1617,7 @@ app.post('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
             serviceId: created.serviceId,
             year: syncYear,
             month: syncMonth,
+            monto: Number(created.monto || 0),
             estado: String(created.estado).toLowerCase() === 'pendiente' ? 'pendiente' : 'pagado',
             paidAt: String(created.estado).toLowerCase() === 'pendiente' ? null : (created.fechaPago || new Date()),
           },
@@ -1661,6 +1663,7 @@ app.put('/api/admin/finanzas/movimientos/:id', asyncHandler(async (req, res) => 
         await tx.servicePayment.upsert({
           where: { serviceId_year_month: { serviceId: updated.serviceId, year: syncYear, month: syncMonth } },
           update: {
+            monto: Number(updated.monto || 0),
             estado: String(updated.estado).toLowerCase() === 'pendiente' ? 'pendiente' : 'pagado',
             paidAt: String(updated.estado).toLowerCase() === 'pendiente' ? null : (updated.fechaPago || new Date()),
           },
@@ -1668,6 +1671,7 @@ app.put('/api/admin/finanzas/movimientos/:id', asyncHandler(async (req, res) => 
             serviceId: updated.serviceId,
             year: syncYear,
             month: syncMonth,
+            monto: Number(updated.monto || 0),
             estado: String(updated.estado).toLowerCase() === 'pendiente' ? 'pendiente' : 'pagado',
             paidAt: String(updated.estado).toLowerCase() === 'pendiente' ? null : (updated.fechaPago || new Date()),
           },
