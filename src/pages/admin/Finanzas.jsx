@@ -44,28 +44,28 @@ const TAB_META = {
 
 const SUMMARY_CARD_STYLES = {
   [TAB_COBROS]: {
-    card: 'border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-white shadow-sm hover:border-emerald-300',
+    card: 'h-full border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-white shadow-sm hover:border-emerald-300',
     pill: 'border-emerald-200 bg-white/90 text-emerald-700',
     dot: 'bg-emerald-400',
     value: 'text-emerald-950',
     hint: 'text-emerald-700/70',
   },
   [TAB_PAGOS]: {
-    card: 'border border-sky-200/80 bg-gradient-to-br from-sky-50 via-white to-white shadow-sm hover:border-sky-300',
+    card: 'h-full border border-sky-200/80 bg-gradient-to-br from-sky-50 via-white to-white shadow-sm hover:border-sky-300',
     pill: 'border-sky-200 bg-white/90 text-sky-700',
     dot: 'bg-sky-400',
     value: 'text-sky-950',
     hint: 'text-sky-700/70',
   },
   [TAB_RETIROS]: {
-    card: 'border border-rose-200/80 bg-gradient-to-br from-rose-50 via-white to-white shadow-sm hover:border-rose-300',
+    card: 'h-full border border-rose-200/80 bg-gradient-to-br from-rose-50 via-white to-white shadow-sm hover:border-rose-300',
     pill: 'border-rose-200 bg-white/90 text-rose-700',
     dot: 'bg-rose-400',
     value: 'text-rose-950',
     hint: 'text-rose-700/70',
   },
   caja: {
-    card: 'border border-teal-200/80 bg-gradient-to-br from-teal-50 via-white to-white shadow-sm hover:border-teal-300',
+    card: 'h-full border border-teal-200/80 bg-gradient-to-br from-teal-50 via-white to-white shadow-sm hover:border-teal-300',
     pill: 'border-teal-200 bg-white/90 text-teal-700',
     dot: 'bg-teal-400',
     value: 'text-teal-950',
@@ -547,7 +547,7 @@ export function Finanzas() {
             onClick={() => handleResumenCardClick(TAB_COBROS)}
             className={SUMMARY_CARD_STYLES[TAB_COBROS].card}
           >
-            <CardContent>
+            <CardContent className="flex h-full flex-col">
               <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${SUMMARY_CARD_STYLES[TAB_COBROS].pill}`}>
                 <span className={`h-2 w-2 rounded-full ${SUMMARY_CARD_STYLES[TAB_COBROS].dot}`} />
                 <p className="text-xs font-medium">Cobrado acumulado</p>
@@ -563,7 +563,7 @@ export function Finanzas() {
               >
                 Pendiente de cobro: ${Number(pendienteCobroAcumulado || 0).toLocaleString('es-AR')}
               </button>
-              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+              <div className="mt-auto grid grid-cols-2 gap-3 pt-3" onClick={stopCardNavigation}>
                 <label className="flex flex-col gap-0.5">
                   <span className="text-[10px] text-slate-400">Desde</span>
                   <input
@@ -590,7 +590,7 @@ export function Finanzas() {
             onClick={() => handleResumenCardClick(TAB_PAGOS)}
             className={SUMMARY_CARD_STYLES[TAB_PAGOS].card}
           >
-            <CardContent>
+            <CardContent className="flex h-full flex-col">
               <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${SUMMARY_CARD_STYLES[TAB_PAGOS].pill}`}>
                 <span className={`h-2 w-2 rounded-full ${SUMMARY_CARD_STYLES[TAB_PAGOS].dot}`} />
                 <p className="text-xs font-medium">Pagado acumulado</p>
@@ -606,7 +606,7 @@ export function Finanzas() {
               >
                 Pendiente de pago: ${Number(pendientePagoAcumulado || 0).toLocaleString('es-AR')}
               </button>
-              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+              <div className="mt-auto grid grid-cols-2 gap-3 pt-3" onClick={stopCardNavigation}>
                 <label className="flex flex-col gap-0.5">
                   <span className="text-[10px] text-slate-400">Desde</span>
                   <input
@@ -633,13 +633,13 @@ export function Finanzas() {
             onClick={() => handleResumenCardClick(TAB_RETIROS)}
             className={SUMMARY_CARD_STYLES[TAB_RETIROS].card}
           >
-            <CardContent>
+            <CardContent className="flex h-full flex-col">
               <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${SUMMARY_CARD_STYLES[TAB_RETIROS].pill}`}>
                 <span className={`h-2 w-2 rounded-full ${SUMMARY_CARD_STYLES[TAB_RETIROS].dot}`} />
                 <p className="text-xs font-medium">Retiros de socios acumulados</p>
               </div>
               <p className={`mt-3 text-2xl font-bold ${SUMMARY_CARD_STYLES[TAB_RETIROS].value}`}>${Number(retirosAcumulado || 0).toLocaleString('es-AR')}</p>
-              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+              <div className="mt-auto grid grid-cols-2 gap-3 pt-3" onClick={stopCardNavigation}>
                 <label className="flex flex-col gap-0.5">
                   <span className="text-[10px] text-slate-400">Desde</span>
                   <input
@@ -666,14 +666,14 @@ export function Finanzas() {
             onClick={() => handleResumenCardClick(null, 'todos')}
             className={SUMMARY_CARD_STYLES.caja.card}
           >
-            <CardContent>
+            <CardContent className="flex h-full flex-col">
               <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${SUMMARY_CARD_STYLES.caja.pill}`}>
                 <span className={`h-2 w-2 rounded-full ${SUMMARY_CARD_STYLES.caja.dot}`} />
                 <p className="text-xs font-medium">Caja disponible</p>
               </div>
               <p className={`mt-3 text-2xl font-bold ${SUMMARY_CARD_STYLES.caja.value}`}>${Number(cajaDisponible || 0).toLocaleString('es-AR')}</p>
               <p className={`mt-2 text-xs ${SUMMARY_CARD_STYLES.caja.hint}`}>Cobrado - pagado - retirado</p>
-              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+              <div className="mt-auto grid grid-cols-2 gap-3 pt-3" onClick={stopCardNavigation}>
                 <label className="flex flex-col gap-0.5">
                   <span className="text-[10px] text-slate-400">Desde</span>
                   <input
