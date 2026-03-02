@@ -1526,7 +1526,7 @@ app.get('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
   const week = req.query?.week ? Number(req.query.week) : null
 
   const where = {}
-  if (tipo && ['cobro', 'pago'].includes(String(tipo))) where.tipo = String(tipo)
+  if (tipo && ['cobro', 'pago', 'retiro'].includes(String(tipo))) where.tipo = String(tipo)
   if (periodType && ['month', 'week'].includes(String(periodType))) where.periodType = String(periodType)
   if (year) where.year = year
   if (month) where.month = month
@@ -1547,8 +1547,8 @@ app.get('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
 app.post('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
   requireFields(req.body, ['tipo', 'metodo', 'monto'])
   const tipo = String(req.body.tipo)
-  if (!['cobro', 'pago'].includes(tipo)) {
-    const error = new Error('Tipo inválido. Debe ser cobro o pago.')
+  if (!['cobro', 'pago', 'retiro'].includes(tipo)) {
+    const error = new Error('Tipo inválido. Debe ser cobro, pago o retiro.')
     error.status = 400
     throw error
   }
@@ -1591,9 +1591,9 @@ app.post('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
         estado: req.body.estado || 'registrado',
         registradoPor: req.body.registradoPor || null,
         notas: req.body.notas || null,
-        patientId: req.body.patientId || null,
-        caregiverId: req.body.caregiverId || null,
-        serviceId: req.body.serviceId || null,
+        patientId: tipo === 'cobro' ? (req.body.patientId || null) : null,
+        caregiverId: tipo === 'pago' ? (req.body.caregiverId || null) : null,
+        serviceId: ['cobro', 'pago'].includes(tipo) ? (req.body.serviceId || null) : null,
       },
       include: {
         patient: { select: { id: true, nombre: true } },

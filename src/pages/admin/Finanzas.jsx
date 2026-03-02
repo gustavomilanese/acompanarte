@@ -12,6 +12,43 @@ const METODOS = ['mercado_pago', 'transferencia', 'electronico', 'efectivo'];
 const COBRADORES = ['Gustavo', 'Marina'];
 const TAB_COBROS = 'cobros';
 const TAB_PAGOS = 'pagos';
+const TAB_RETIROS = 'retiros';
+const DEFAULT_RANGE_START = '2026-01';
+
+const TAB_META = {
+  [TAB_COBROS]: {
+    tipo: 'cobro',
+    label: 'Cobros',
+    listTitle: 'Lista de cobros',
+    createLabel: 'Nuevo cobro',
+    completedLabel: 'Cobrado',
+    buttonClass: 'bg-sky-600 text-white border-sky-600',
+  },
+  [TAB_PAGOS]: {
+    tipo: 'pago',
+    label: 'Pagos',
+    listTitle: 'Lista de pagos',
+    createLabel: 'Nuevo pago',
+    completedLabel: 'Pagado',
+    buttonClass: 'bg-violet-600 text-white border-violet-600',
+  },
+  [TAB_RETIROS]: {
+    tipo: 'retiro',
+    label: 'Retiros de socios',
+    listTitle: 'Lista de retiros de socios',
+    createLabel: 'Nuevo retiro',
+    completedLabel: 'Retirado',
+    buttonClass: 'bg-rose-600 text-white border-rose-600',
+  },
+};
+
+const getCompletedEstado = (tipo) => {
+  if (tipo === 'cobro') return 'cobrado';
+  if (tipo === 'pago') return 'pagado';
+  return 'retirado';
+};
+
+const getDefaultCategoria = (tipo) => (tipo === 'retiro' ? 'retiro de socios' : 'mensualidad');
 
 export function Finanzas() {
   const navigate = useNavigate();
@@ -19,6 +56,7 @@ export function Finanzas() {
   const { showSuccess, showError } = useToast();
 
   const now = new Date();
+  const currentMonthValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   const [tab, setTab] = useState(TAB_COBROS);
   const [movimientosTotales, setMovimientosTotales] = useState([]);
@@ -29,10 +67,12 @@ export function Finanzas() {
   const [selectedYear, setSelectedYear] = useState(2026);
   const [estadoFiltro, setEstadoFiltro] = useState('todos');
 
-  const [rangoCobrosDesde, setRangoCobrosDesde] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
-  const [rangoCobrosHasta, setRangoCobrosHasta] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
-  const [rangoPagosDesde, setRangoPagosDesde] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
-  const [rangoPagosHasta, setRangoPagosHasta] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const [rangoCobrosDesde, setRangoCobrosDesde] = useState(DEFAULT_RANGE_START);
+  const [rangoCobrosHasta, setRangoCobrosHasta] = useState(currentMonthValue);
+  const [rangoPagosDesde, setRangoPagosDesde] = useState(DEFAULT_RANGE_START);
+  const [rangoPagosHasta, setRangoPagosHasta] = useState(currentMonthValue);
+  const [rangoRetirosDesde, setRangoRetirosDesde] = useState(DEFAULT_RANGE_START);
+  const [rangoRetirosHasta, setRangoRetirosHasta] = useState(currentMonthValue);
 
   const [registroModal, setRegistroModal] = useState({
     open: false,
@@ -43,10 +83,10 @@ export function Finanzas() {
     patientId: '',
     caregiverId: '',
     monto: '',
-    categoria: 'mensualidad',
+    categoria: getDefaultCategoria('cobro'),
     metodo: 'transferencia',
     fechaPago: now.toISOString().slice(0, 10),
-    estado: 'cobrado',
+    estado: getCompletedEstado('cobro'),
     registradoPor: 'Gustavo',
     notas: '',
     periodType: 'month',
@@ -120,10 +160,10 @@ export function Finanzas() {
         patientId: existing.patientId || service.pacienteId || '',
         caregiverId: existing.caregiverId || service.cuidadorId || '',
         monto: String(existing.monto || ''),
-        categoria: existing.categoria || 'mensualidad',
+        categoria: existing.categoria || getDefaultCategoria('cobro'),
         metodo: existing.metodo || 'transferencia',
         fechaPago: new Date().toISOString().slice(0, 10),
-        estado: 'cobrado',
+        estado: existing.estado || getCompletedEstado('cobro'),
         registradoPor: existing.registradoPor || 'Gustavo',
         notas: existing.notas || '',
         periodType: 'month',
@@ -141,10 +181,10 @@ export function Finanzas() {
         patientId: service.pacienteId || '',
         caregiverId: service.cuidadorId || '',
         monto: '',
-        categoria: 'mensualidad',
+        categoria: getDefaultCategoria('cobro'),
         metodo: 'transferencia',
         fechaPago: new Date().toISOString().slice(0, 10),
-        estado: 'cobrado',
+        estado: getCompletedEstado('cobro'),
         registradoPor: 'Gustavo',
         notas: `Cobro servicio ${service.paciente?.nombre || ''}`.trim(),
         periodType: 'month',
@@ -163,21 +203,22 @@ export function Finanzas() {
   };
 
   const openNuevoRegistroModal = () => {
+    const tipoNuevo = TAB_META[tab].tipo;
     const serviceDefault = serviciosEnCurso[0] || null;
     const serviceDefaultCaregiver = serviceDefault?.caregivers?.[0]?.id || serviceDefault?.cuidadorId || '';
     setRegistroModal({
       open: true,
       mode: 'create',
       movementId: '',
-      tipo: tab === TAB_COBROS ? 'cobro' : 'pago',
-      serviceId: serviceDefault?.id || '',
-      patientId: tab === TAB_COBROS ? (serviceDefault?.pacienteId || '') : '',
-      caregiverId: tab === TAB_PAGOS ? serviceDefaultCaregiver : '',
+      tipo: tipoNuevo,
+      serviceId: tipoNuevo === 'retiro' ? '' : (serviceDefault?.id || ''),
+      patientId: tipoNuevo === 'cobro' ? (serviceDefault?.pacienteId || '') : '',
+      caregiverId: tipoNuevo === 'pago' ? serviceDefaultCaregiver : '',
       monto: '',
-      categoria: 'mensualidad',
+      categoria: getDefaultCategoria(tipoNuevo),
       metodo: 'transferencia',
       fechaPago: new Date().toISOString().slice(0, 10),
-      estado: tab === TAB_COBROS ? 'cobrado' : 'pagado',
+      estado: getCompletedEstado(tipoNuevo),
       registradoPor: 'Gustavo',
       notas: '',
       periodType: 'month',
@@ -199,10 +240,10 @@ export function Finanzas() {
       patientId: item.patientId || '',
       caregiverId: item.caregiverId || '',
       monto: String(item.monto || ''),
-      categoria: item.categoria || 'mensualidad',
+      categoria: item.categoria || getDefaultCategoria(item.tipo),
       metodo: item.metodo || 'transferencia',
       fechaPago: new Date(fechaBase).toISOString().slice(0, 10),
-      estado: item.estado || (item.tipo === 'cobro' ? 'cobrado' : 'pagado'),
+      estado: item.estado || getCompletedEstado(item.tipo),
       registradoPor: item.registradoPor || 'Gustavo',
       notas: item.notas || '',
       periodType: item.periodType || 'month',
@@ -228,7 +269,7 @@ export function Finanzas() {
     e.preventDefault();
     try {
       const selectedService = registroModal.serviceId
-        ? serviciosEnCurso.find((s) => s.id === registroModal.serviceId)
+        ? serviciosById.get(registroModal.serviceId)
         : null;
 
       if (registroModal.mode === 'create' && registroModal.tipo === 'cobro' && !selectedService) {
@@ -266,7 +307,7 @@ export function Finanzas() {
           estado: registroModal.estado,
           registradoPor: registroModal.registradoPor,
           notas: registroModal.notas || null,
-          serviceId: selectedService?.id || null,
+          serviceId: ['cobro', 'pago'].includes(registroModal.tipo) ? (selectedService?.id || null) : null,
           patientId: registroModal.tipo === 'cobro' ? selectedService?.pacienteId || null : null,
           caregiverId: registroModal.tipo === 'pago' ? registroModal.caregiverId || null : null,
           periodType: registroModal.periodType,
@@ -290,7 +331,7 @@ export function Finanzas() {
 
   const movimientosFiltrados = useMemo(
     () => movimientosTotales
-      .filter((m) => (tab === TAB_COBROS ? m.tipo === 'cobro' : m.tipo === 'pago'))
+      .filter((m) => m.tipo === TAB_META[tab].tipo)
       .filter((m) => Number(m.year) === Number(selectedYear))
       .filter((m) => {
         if (estadoFiltro === 'todos') return true;
@@ -309,7 +350,7 @@ export function Finanzas() {
   const calcularAcumulado = (tipo, desde, hasta) => {
     const [fromY, fromM] = String(desde || '').split('-').map(Number);
     const [toY, toM] = String(hasta || '').split('-').map(Number);
-    if (!fromY || !fromM || !toY || !toM) return { cobrado: 0, pagado: 0 };
+    if (!fromY || !fromM || !toY || !toM) return 0;
 
     const fromDate = new Date(fromY, fromM - 1, 1, 0, 0, 0, 0);
     const toDate = new Date(toY, toM, 0, 23, 59, 59, 999);
@@ -336,6 +377,11 @@ export function Finanzas() {
     [movimientosTotales, rangoPagosDesde, rangoPagosHasta]
   );
 
+  const retirosAcumulado = useMemo(
+    () => calcularAcumulado('retiro', rangoRetirosDesde, rangoRetirosHasta),
+    [movimientosTotales, rangoRetirosDesde, rangoRetirosHasta]
+  );
+
   const months = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
@@ -346,8 +392,11 @@ export function Finanzas() {
   const getNombreMovimiento = (m) => {
     if (m.tipo === 'cobro') {
       if (m.patient?.nombre) return m.patient.nombre;
-      const service = m.serviceId ? serviciosEnCurso.find((s) => s.id === m.serviceId) : null;
+      const service = m.serviceId ? serviciosById.get(m.serviceId) : null;
       return service?.paciente?.nombre || 'Cliente no asignado';
+    }
+    if (m.tipo === 'retiro') {
+      return m.notas?.trim() || 'Retiro de socios';
     }
     return m.caregiver?.nombre || 'Cuidador no asignado';
   };
@@ -376,9 +425,7 @@ export function Finanzas() {
 
   const handleToggleEstadoRapido = async (movimiento) => {
     const isPendiente = String(movimiento.estado || '').toLowerCase() === 'pendiente';
-    const estadoObjetivo = isPendiente
-      ? (movimiento.tipo === 'cobro' ? 'cobrado' : 'pagado')
-      : 'pendiente';
+    const estadoObjetivo = isPendiente ? getCompletedEstado(movimiento.tipo) : 'pendiente';
     try {
       await adminApi.updateFinanzasMovimiento(movimiento.id, {
         estado: estadoObjetivo,
@@ -401,7 +448,7 @@ export function Finanzas() {
             </button>
             <div>
               <h1 className="text-xl font-bold text-dark">Modulo de finanzas</h1>
-              <p className="text-sm text-slate-500">Cobros y pagos</p>
+              <p className="text-sm text-slate-500">Cobros, pagos y retiros</p>
             </div>
           </div>
           <AdminQuickMenu />
@@ -409,8 +456,8 @@ export function Finanzas() {
       </header>
 
       <div className="p-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <Card className="md:col-span-2">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+          <Card>
             <CardContent>
               <p className="text-xs text-slate-500">Cobrado acumulado</p>
               <p className="text-2xl font-bold">${Number(cobradoAcumulado || 0).toLocaleString('es-AR')}</p>
@@ -430,7 +477,7 @@ export function Finanzas() {
               </div>
             </CardContent>
           </Card>
-          <Card className="md:col-span-2">
+          <Card>
             <CardContent>
               <p className="text-xs text-slate-500">Pagado acumulado</p>
               <p className="text-2xl font-bold">${Number(pagadoAcumulado || 0).toLocaleString('es-AR')}</p>
@@ -450,23 +497,39 @@ export function Finanzas() {
               </div>
             </CardContent>
           </Card>
+          <Card>
+            <CardContent>
+              <p className="text-xs text-slate-500">Retiros de socios acumulados</p>
+              <p className="text-2xl font-bold">${Number(retirosAcumulado || 0).toLocaleString('es-AR')}</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <input
+                  type="month"
+                  value={rangoRetirosDesde}
+                  onChange={(e) => setRangoRetirosDesde(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
+                />
+                <input
+                  type="month"
+                  value={rangoRetirosHasta}
+                  onChange={(e) => setRangoRetirosHasta(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
+                />
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setTab(TAB_COBROS)}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === TAB_COBROS ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-300'}`}
-          >
-            Cobros
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab(TAB_PAGOS)}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === TAB_PAGOS ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-300'}`}
-          >
-            Pagos
-          </button>
+          {Object.entries(TAB_META).map(([tabKey, tabConfig]) => (
+            <button
+              key={tabKey}
+              type="button"
+              onClick={() => setTab(tabKey)}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${tab === tabKey ? tabConfig.buttonClass : 'bg-white text-slate-600 border-slate-300'}`}
+            >
+              {tabConfig.label}
+            </button>
+          ))}
 
           <div className="w-px h-6 bg-slate-300 mx-1" />
 
@@ -488,18 +551,18 @@ export function Finanzas() {
           >
             <option value="todos">Todos</option>
             <option value="pendiente">Pendiente</option>
-            <option value="pagado">{tab === TAB_COBROS ? 'Cobrado' : 'Pagado'}</option>
+            <option value="pagado">{TAB_META[tab].completedLabel}</option>
           </select>
 
           <Button type="button" onClick={openNuevoRegistroModal}>
             <Plus className="w-4 h-4 mr-1" />
-            {tab === TAB_COBROS ? 'Nuevo cobro' : 'Nuevo pago'}
+            {TAB_META[tab].createLabel}
           </Button>
         </div>
 
         <Card className="bg-white border border-slate-200">
           <CardContent>
-            <h3 className="font-semibold text-dark mb-3">{tab === TAB_COBROS ? 'Lista de cobros' : 'Lista de pagos'}</h3>
+            <h3 className="font-semibold text-dark mb-3">{TAB_META[tab].listTitle}</h3>
             <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
               {movimientosFiltrados.map((m) => {
                 const referencia = getReferenciaMovimiento(m);
@@ -533,7 +596,7 @@ export function Finanzas() {
                       {m.categoria || '-'} · {m.metodo.replace('_', ' ')} · {renderPeriodo(m)}
                     </p>
                     <p className="text-xs text-slate-500">
-                      Pago: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
+                      Fecha: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
                       {m.registradoPor ? ` · Registrado por: ${m.registradoPor}` : ''}
                     </p>
                     <div className="mt-2 flex items-center gap-2">
@@ -567,11 +630,11 @@ export function Finanzas() {
       <Modal
         isOpen={registroModal.open}
         onClose={closeRegistroModal}
-        title={registroModal.mode === 'update' ? 'Registrar pago/cobro' : 'Nuevo registro de cobro/pago'}
+        title={registroModal.mode === 'update' ? `Editar ${TAB_META[Object.keys(TAB_META).find((key) => TAB_META[key].tipo === registroModal.tipo) || TAB_COBROS].label.toLowerCase()}` : TAB_META[tab].createLabel}
         size="md"
       >
         <form onSubmit={submitRegistroModal} className="space-y-3">
-          {registroModal.serviceId && (
+          {registroModal.serviceId && registroModal.tipo !== 'retiro' && (
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
               Vinculado a servicio: {servicios.find((s) => s.id === registroModal.serviceId)?.paciente?.nombre || registroModal.serviceId}
             </div>
@@ -698,8 +761,8 @@ export function Finanzas() {
             onChange={(e) => setRegistroModal((prev) => ({ ...prev, estado: e.target.value }))}
             className="w-full px-3 py-2 border-2 border-light-300 rounded-xl"
           >
-            <option value={registroModal.tipo === 'cobro' ? 'cobrado' : 'pagado'}>
-              {registroModal.tipo === 'cobro' ? 'Cobrado' : 'Pagado'}
+            <option value={getCompletedEstado(registroModal.tipo)}>
+              {registroModal.tipo === 'cobro' ? 'Cobrado' : registroModal.tipo === 'pago' ? 'Pagado' : 'Retirado'}
             </option>
             <option value="pendiente">Pendiente</option>
           </select>
