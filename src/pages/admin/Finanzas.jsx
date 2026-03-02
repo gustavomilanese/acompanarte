@@ -184,6 +184,7 @@ export function Finanzas() {
   const openEditarRegistroModal = (item) => {
     const baseYear = item.year || now.getFullYear();
     const baseMonth = item.month || (now.getMonth() + 1);
+    const fechaBase = item.fechaPago || item.fecha || new Date().toISOString();
     setRegistroModal({
       open: true,
       mode: 'update',
@@ -195,8 +196,8 @@ export function Finanzas() {
       monto: String(item.monto || ''),
       categoria: item.categoria || 'mensualidad',
       metodo: item.metodo || 'transferencia',
-      fechaPago: new Date().toISOString().slice(0, 10),
-      estado: item.tipo === 'cobro' ? 'cobrado' : 'pagado',
+      fechaPago: new Date(fechaBase).toISOString().slice(0, 10),
+      estado: item.estado || (item.tipo === 'cobro' ? 'cobrado' : 'pagado'),
       registradoPor: item.registradoPor || 'Gustavo',
       notas: item.notas || '',
       periodType: item.periodType || 'month',
@@ -242,6 +243,8 @@ export function Finanzas() {
 
       if (registroModal.mode === 'update' && registroModal.movementId) {
         await adminApi.updateFinanzasMovimiento(registroModal.movementId, {
+          monto: Number(registroModal.monto || 0),
+          categoria: registroModal.categoria,
           metodo: registroModal.metodo,
           fechaPago: registroModal.fechaPago || null,
           estado: registroModal.estado,
@@ -607,14 +610,6 @@ export function Finanzas() {
                   </select>
                 </>
               )}
-              <input
-                type="number"
-                value={registroModal.monto}
-                onChange={(e) => setRegistroModal((prev) => ({ ...prev, monto: e.target.value }))}
-                className="w-full px-3 py-2 border-2 border-light-300 rounded-xl"
-                placeholder="Monto"
-                required
-              />
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="number"
@@ -633,6 +628,15 @@ export function Finanzas() {
               </div>
             </>
           )}
+
+          <input
+            type="number"
+            value={registroModal.monto}
+            onChange={(e) => setRegistroModal((prev) => ({ ...prev, monto: e.target.value }))}
+            className="w-full px-3 py-2 border-2 border-light-300 rounded-xl"
+            placeholder="Monto"
+            required
+          />
 
           <div className="grid grid-cols-2 gap-2">
             <select
