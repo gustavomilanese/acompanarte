@@ -689,26 +689,32 @@ export function Finanzas() {
 
           <div className="w-px h-6 bg-slate-300 mx-1" />
 
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(Number(e.target.value || 2026))}
-            className="px-3 py-1.5 border rounded-lg bg-white text-sm"
-          >
-            {Array.from({ length: 8 }, (_, i) => 2024 + i).map((year) => (
-              <option key={year} value={year}>
-                Año {year}
-              </option>
-            ))}
-          </select>
-          <select
-            value={estadoFiltro}
-            onChange={(e) => setEstadoFiltro(e.target.value)}
-            className="px-3 py-1.5 border rounded-lg bg-white text-sm"
-          >
-            <option value="todos">Todos</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="pagado">{TAB_META[tab].completedLabel}</option>
-          </select>
+          <label className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Año</span>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value || 2026))}
+              className="bg-transparent text-sm text-slate-700 outline-none"
+            >
+              {Array.from({ length: 8 }, (_, i) => 2024 + i).map((year) => (
+                <option key={year} value={year}>
+                  Año {year}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Estado</span>
+            <select
+              value={estadoFiltro}
+              onChange={(e) => setEstadoFiltro(e.target.value)}
+              className="bg-transparent text-sm text-slate-700 outline-none"
+            >
+              <option value="todos">Todos</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="pagado">{TAB_META[tab].completedLabel}</option>
+            </select>
+          </label>
 
           <Button type="button" onClick={openNuevoRegistroModal}>
             <Plus className="w-4 h-4 mr-1" />
