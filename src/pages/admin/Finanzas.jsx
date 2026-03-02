@@ -67,7 +67,7 @@ export function Finanzas() {
       setMovimientosTotales(todos);
       setPacientes(pacientesData);
       setCuidadores(cuidadoresData.filter((c) => c.estado === 'activo'));
-      setServicios(serviciosData.filter((s) => s.estado === 'en_curso'));
+      setServicios(serviciosData);
     } catch (error) {
       showError(error.message || 'No se pudo cargar el módulo de finanzas');
     }
@@ -79,6 +79,11 @@ export function Finanzas() {
 
   const serviciosEnCurso = useMemo(
     () => servicios.filter((s) => s.estado === 'en_curso'),
+    [servicios]
+  );
+
+  const serviciosById = useMemo(
+    () => new Map(servicios.map((service) => [service.id, service])),
     [servicios]
   );
 
@@ -347,6 +352,18 @@ export function Finanzas() {
     return m.caregiver?.nombre || 'Cuidador no asignado';
   };
 
+  const getReferenciaMovimiento = (m) => {
+    const service = m.serviceId ? serviciosById.get(m.serviceId) : null;
+    const pacienteNombre = m.patient?.nombre || service?.paciente?.nombre || null;
+    const direccion = service?.direccion || service?.paciente?.direccion || null;
+
+    if (pacienteNombre && direccion) return `${pacienteNombre} · ${direccion}`;
+    if (pacienteNombre) return pacienteNombre;
+    if (direccion) return direccion;
+    if (m.serviceId) return 'Servicio vinculado';
+    return null;
+  };
+
   const handleDeleteMovimiento = async (movimientoId) => {
     try {
       await adminApi.deleteFinanzasMovimiento(movimientoId);
@@ -484,52 +501,61 @@ export function Finanzas() {
           <CardContent>
             <h3 className="font-semibold text-dark mb-3">{tab === TAB_COBROS ? 'Lista de cobros' : 'Lista de pagos'}</h3>
             <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-              {movimientosFiltrados.map((m) => (
-                <div key={m.id} className="rounded-lg border border-slate-200 px-3 py-2 bg-slate-50">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-slate-700">
-                      {getNombreMovimiento(m)}
+              {movimientosFiltrados.map((m) => {
+                const referencia = getReferenciaMovimiento(m);
+
+                return (
+                  <div key={m.id} className="rounded-lg border border-slate-200 px-3 py-2 bg-slate-50">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-700">
+                        {getNombreMovimiento(m)}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleEstadoRapido(m)}
+                          className={`text-xs px-2 py-0.5 rounded-full border ${String(m.estado).toLowerCase() === 'pendiente' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'} hover:brightness-95`}
+                          title="Cambiar estado"
+                        >
+                          {m.estado}
+                        </button>
+                        <span className="text-sm font-semibold text-slate-800">
+                          ${Number(m.monto).toLocaleString('es-AR')}
+                        </span>
+                      </div>
+                    </div>
+                    {m.tipo === 'pago' && referencia && (
+                      <p className="text-xs text-slate-600 mt-1">
+                        Corresponde a: {referencia}
+                      </p>
+                    )}
+                    <p className="text-xs text-slate-500 mt-1">
+                      {m.categoria || '-'} · {m.metodo.replace('_', ' ')} · {renderPeriodo(m)}
                     </p>
-                    <div className="flex items-center gap-2">
+                    <p className="text-xs text-slate-500">
+                      Pago: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
+                      {m.registradoPor ? ` · Registrado por: ${m.registradoPor}` : ''}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleToggleEstadoRapido(m)}
-                        className={`text-xs px-2 py-0.5 rounded-full border ${String(m.estado).toLowerCase() === 'pendiente' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'} hover:brightness-95`}
-                        title="Cambiar estado"
+                        onClick={() => openEditarRegistroModal(m)}
+                        className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
                       >
-                        {m.estado}
+                        Editar
                       </button>
-                      <span className="text-sm font-semibold text-slate-800">
-                        ${Number(m.monto).toLocaleString('es-AR')}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMovimiento(m.id)}
+                        className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Eliminar
+                      </button>
                     </div>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {m.categoria || '-'} · {m.metodo.replace('_', ' ')} · {renderPeriodo(m)}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Pago: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
-                    {m.registradoPor ? ` · Registrado por: ${m.registradoPor}` : ''}
-                  </p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEditarRegistroModal(m)}
-                      className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteMovimiento(m.id)}
-                      className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Eliminar
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {movimientosFiltrados.length === 0 && (
                 <p className="text-sm text-slate-500">Sin registros cargados.</p>
               )}
