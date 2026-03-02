@@ -513,9 +513,16 @@ export function Finanzas() {
             <CardContent>
               <p className="text-xs text-slate-500">Cobrado acumulado</p>
               <p className="text-2xl font-bold">${Number(cobradoAcumulado || 0).toLocaleString('es-AR')}</p>
-              <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResumenCardClick(TAB_COBROS, 'pendiente');
+                }}
+                className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              >
                 Pendiente de cobro: ${Number(pendienteCobroAcumulado || 0).toLocaleString('es-AR')}
-              </div>
+              </button>
               <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
                 <input
                   type="month"
@@ -537,9 +544,16 @@ export function Finanzas() {
             <CardContent>
               <p className="text-xs text-slate-500">Pagado acumulado</p>
               <p className="text-2xl font-bold">${Number(pagadoAcumulado || 0).toLocaleString('es-AR')}</p>
-              <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResumenCardClick(TAB_PAGOS, 'pendiente');
+                }}
+                className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              >
                 Pendiente de pago: ${Number(pendientePagoAcumulado || 0).toLocaleString('es-AR')}
-              </div>
+              </button>
               <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
                 <input
                   type="month"
@@ -676,9 +690,9 @@ export function Finanzas() {
                           </span>
                         </div>
                       </div>
-                      {m.tipo === 'pago' && referencia && (
+                      {m.tipo !== 'retiro' && referencia && (
                         <p className="text-xs text-slate-600 mt-1">
-                          Corresponde a: {referencia}
+                          Servicio: {referencia}
                         </p>
                       )}
                       <p className="text-xs text-slate-500 mt-1">
