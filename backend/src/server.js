@@ -342,8 +342,10 @@ function requireFields(payload, fields) {
 function toCaregiverInput(body) {
   requireFields(body, ['nombre', 'email', 'telefono', 'codigo', 'disponibilidad'])
   const inferredZonaAmba = inferAmbaZoneGroup(body.provincia || null, body.zona || null)
-
-  return {
+  const hasAvatar = Object.prototype.hasOwnProperty.call(body, 'avatar')
+  const hasCvFields = ['cvNombre', 'cvMimeType', 'cvArchivo']
+    .some((field) => Object.prototype.hasOwnProperty.call(body, field))
+  const data = {
     nombre: body.nombre,
     email: body.email,
     telefono: body.telefono,
@@ -367,13 +369,21 @@ function toCaregiverInput(body) {
     tarifaReferencia: body.tarifaReferencia !== undefined && body.tarifaReferencia !== null && body.tarifaReferencia !== ''
       ? Number(body.tarifaReferencia)
       : null,
-    avatar: body.avatar || null,
-    cvNombre: body.cvNombre || null,
-    cvMimeType: body.cvMimeType || null,
-    cvArchivo: body.cvArchivo || null,
     bio: body.bio || null,
     especialidades: Array.isArray(body.especialidades) ? body.especialidades : [],
   }
+
+  if (hasAvatar) {
+    data.avatar = body.avatar || null
+  }
+
+  if (hasCvFields) {
+    data.cvNombre = body.cvNombre || null
+    data.cvMimeType = body.cvMimeType || null
+    data.cvArchivo = body.cvArchivo || null
+  }
+
+  return data
 }
 
 function sanitizePhone(value = '') {
@@ -640,8 +650,9 @@ async function analyzeCvWithOpenAI(file) {
 
 function toPatientInput(body) {
   requireFields(body, ['nombre', 'edad', 'tipo', 'condicion', 'direccion'])
+  const hasFoto = Object.prototype.hasOwnProperty.call(body, 'foto')
 
-  return {
+  const data = {
     nombre: body.nombre,
     edad: Number(body.edad),
     tipo: body.tipo,
@@ -650,10 +661,15 @@ function toPatientInput(body) {
     contactoEmergenciaNombre: body.contactoEmergencia?.nombre || '',
     contactoEmergenciaTelefono: body.contactoEmergencia?.telefono || '',
     acompananteAsignadoId: body.acompananteAsignado || null,
-    foto: body.foto || null,
     notas: body.notas || null,
     necesidadesEspeciales: Array.isArray(body.necesidadesEspeciales) ? body.necesidadesEspeciales : [],
   }
+
+  if (hasFoto) {
+    data.foto = body.foto || null
+  }
+
+  return data
 }
 
 function toServiceInput(body) {
@@ -862,19 +878,42 @@ app.get('/api/admin/acompanantes', asyncHandler(async (_req, res) => {
 
 app.get('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
   const item = await prisma.caregiver.findUniqueOrThrow({ where: { id: req.params.id } })
-  res.json(mapCaregiver(item))
+  res.json(mapCaregiverSummary(item))
+}))
+
+app.get('/api/admin/acompanantes/:id/cv', asyncHandler(async (req, res) => {
+  const item = await prisma.caregiver.findUniqueOrThrow({
+    where: { id: req.params.id },
+    select: {
+      cvNombre: true,
+      cvMimeType: true,
+      cvArchivo: true,
+    },
+  })
+
+  if (!item.cvArchivo) {
+    const error = new Error('Este acompañante no tiene un CV adjunto.')
+    error.status = 404
+    throw error
+  }
+
+  res.json({
+    cvNombre: item.cvNombre || null,
+    cvMimeType: item.cvMimeType || null,
+    cvArchivo: item.cvArchivo,
+  })
 }))
 
 app.post('/api/admin/acompanantes', asyncHandler(async (req, res) => {
   const data = toCaregiverInput(req.body)
   const item = await prisma.caregiver.create({ data })
-  res.status(201).json(mapCaregiver(item))
+  res.status(201).json(mapCaregiverSummary(item))
 }))
 
 app.put('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
   const data = toCaregiverInput(req.body)
   const item = await prisma.caregiver.update({ where: { id: req.params.id }, data })
-  res.json(mapCaregiver(item))
+  res.json(mapCaregiverSummary(item))
 }))
 
 app.post('/api/admin/acompanantes/import-bulk', asyncHandler(async (req, res) => {
@@ -1063,19 +1102,19 @@ app.get('/api/admin/clientes', asyncHandler(async (_req, res) => {
 
 app.get('/api/admin/clientes/:id', asyncHandler(async (req, res) => {
   const item = await prisma.patient.findUniqueOrThrow({ where: { id: req.params.id } })
-  res.json(mapPatient(item))
+  res.json(mapPatientSummary(item))
 }))
 
 app.post('/api/admin/clientes', asyncHandler(async (req, res) => {
   const data = toPatientInput(req.body)
   const item = await prisma.patient.create({ data })
-  res.status(201).json(mapPatient(item))
+  res.status(201).json(mapPatientSummary(item))
 }))
 
 app.put('/api/admin/clientes/:id', asyncHandler(async (req, res) => {
   const data = toPatientInput(req.body)
   const item = await prisma.patient.update({ where: { id: req.params.id }, data })
-  res.json(mapPatient(item))
+  res.json(mapPatientSummary(item))
 }))
 
 app.delete('/api/admin/clientes/:id', asyncHandler(async (req, res) => {

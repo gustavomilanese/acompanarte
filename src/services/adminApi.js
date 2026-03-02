@@ -2,7 +2,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL
   || (import.meta.env.PROD ? 'https://acompanarte-production.up.railway.app' : 'http://localhost:4000')
 const GET_CACHE_TTL_MS = 30_000
 const responseCache = new Map()
-const STORAGE_PREFIX = 'acom-admin-cache:'
+const STORAGE_PREFIX = 'acom-admin-cache:v2:'
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -200,6 +200,12 @@ export const adminApi = {
   },
   getAcompanante(id) {
     return request(`/api/admin/acompanantes/${id}`, {
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
+  getAcompananteCv(id) {
+    return request(`/api/admin/acompanantes/${id}/cv`, {
       useCache: false,
       cloneResponse: false,
     })

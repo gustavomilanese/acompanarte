@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -55,6 +55,13 @@ function getEmptyClienteFormData() {
   };
 }
 
+function getEmptyClienteAssetState() {
+  return {
+    hasFoto: false,
+    fotoMode: 'keep',
+  };
+}
+
 function mapClienteToFormData(cliente) {
   return {
     nombre: cliente.nombre,
@@ -64,7 +71,7 @@ function mapClienteToFormData(cliente) {
     direccion: cliente.direccion,
     contactoEmergencia: cliente.contactoEmergencia || { nombre: '', telefono: '' },
     acompananteAsignado: cliente.acompananteAsignado || '',
-    foto: cliente.foto || '',
+    foto: '',
     notas: cliente.notas || '',
     necesidadesEspeciales: cliente.necesidadesEspeciales || [],
   };
@@ -80,11 +87,10 @@ export function Clientes() {
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [showModal, setShowModal] = useState(false);
   const [editingCliente, setEditingCliente] = useState(null);
-  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [confirmDeleteModal, setConfirmDeleteModal] = useState(null);
-  const detailRequestRef = useRef(0);
 
   const [formData, setFormData] = useState(getEmptyClienteFormData);
+  const [assetState, setAssetState] = useState(getEmptyClienteAssetState);
 
   useEffect(() => {
     const loadData = async () => {
@@ -113,42 +119,25 @@ export function Clientes() {
   });
 
   const closeModal = () => {
-    detailRequestRef.current += 1;
-    setIsDetailLoading(false);
     setShowModal(false);
   };
 
-  const handleOpenModal = async (cliente = null) => {
+  const handleOpenModal = (cliente = null) => {
     if (!cliente) {
       setEditingCliente(null);
       setFormData(getEmptyClienteFormData());
-      setIsDetailLoading(false);
+      setAssetState(getEmptyClienteAssetState());
       setShowModal(true);
       return;
     }
 
-    const requestId = detailRequestRef.current + 1;
-    detailRequestRef.current = requestId;
     setEditingCliente(cliente);
-    setFormData(getEmptyClienteFormData());
-    setIsDetailLoading(true);
+    setFormData(mapClienteToFormData(cliente));
+    setAssetState({
+      hasFoto: Boolean(cliente.hasFoto),
+      fotoMode: 'keep',
+    });
     setShowModal(true);
-
-    try {
-      const detail = await adminApi.getCliente(cliente.id);
-      if (detailRequestRef.current !== requestId) return;
-      setEditingCliente(detail);
-      setFormData(mapClienteToFormData(detail));
-    } catch (error) {
-      if (detailRequestRef.current !== requestId) return;
-      setShowModal(false);
-      setEditingCliente(null);
-      showError(error.message || 'No se pudo cargar el paciente');
-    } finally {
-      if (detailRequestRef.current === requestId) {
-        setIsDetailLoading(false);
-      }
-    }
   };
 
   const handleSubmit = async (e) => {
@@ -159,6 +148,12 @@ export function Clientes() {
         ...formData,
         edad: Number(formData.edad),
       };
+
+      if (assetState.fotoMode === 'replace') {
+        payload.foto = formData.foto || null;
+      } else if (assetState.fotoMode === 'remove') {
+        payload.foto = null;
+      }
 
       if (editingCliente) {
         const updated = await adminApi.updateCliente(editingCliente.id, payload);
@@ -201,9 +196,18 @@ export function Clientes() {
     try {
       const dataUrl = await readImageFileAsDataUrl(file);
       setFormData((prev) => ({ ...prev, foto: dataUrl }));
+      setAssetState((prev) => ({ ...prev, fotoMode: 'replace' }));
     } catch (error) {
       showError(error.message || 'No se pudo cargar la imagen');
     }
+  };
+
+  const handleFotoRemove = () => {
+    setFormData((prev) => ({ ...prev, foto: '' }));
+    setAssetState((prev) => ({
+      ...prev,
+      fotoMode: editingCliente && prev.hasFoto ? 'remove' : 'keep',
+    }));
   };
 
   const getAcompananteNombre = (id) => {
@@ -365,12 +369,6 @@ export function Clientes() {
         title={editingCliente ? 'Editar paciente' : 'Nuevo paciente'}
         size="lg"
       >
-        {isDetailLoading ? (
-          <div className="py-12 text-center">
-            <p className="text-sm font-medium text-slate-700">Cargando datos del paciente...</p>
-            <p className="text-xs text-slate-500 mt-2">La foto completa se trae solo cuando abrís la edición para evitar bloqueos en la página.</p>
-          </div>
-        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Input
@@ -425,18 +423,33 @@ export function Clientes() {
               onChange={handleFotoFileChange}
               className="w-full px-4 py-2 bg-white border-2 border-light-300 rounded-xl text-dark"
             />
-            {formData.foto && (
+            {formData.foto ? (
               <div className="mt-3 flex items-center gap-3">
                 <img src={formData.foto} alt="Preview" className="w-14 h-14 rounded-2xl object-cover border border-light-300" />
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setFormData((prev) => ({ ...prev, foto: '' }))}
+                  onClick={handleFotoRemove}
                 >
                   Quitar foto
                 </Button>
               </div>
+            ) : (editingCliente && assetState.hasFoto && assetState.fotoMode === 'keep') ? (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                <p className="text-sm text-sky-800">La foto actual se mantiene guardada.</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleFotoRemove}
+                >
+                  Quitar foto
+                </Button>
+              </div>
+            ) : null}
+            {editingCliente && assetState.hasFoto && assetState.fotoMode === 'remove' && (
+              <p className="mt-2 text-xs text-red-600">La foto actual se eliminará al guardar.</p>
             )}
           </div>
 
@@ -516,7 +529,6 @@ export function Clientes() {
             </Button>
           </div>
         </form>
-        )}
       </Modal>
     </div>
   );

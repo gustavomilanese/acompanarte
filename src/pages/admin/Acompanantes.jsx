@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -226,6 +226,16 @@ function getEmptyAcompananteFormData() {
   };
 }
 
+function getEmptyAcompananteAssetState() {
+  return {
+    hasAvatar: false,
+    hasCv: false,
+    currentCvNombre: '',
+    avatarMode: 'keep',
+    cvMode: 'keep',
+  };
+}
+
 function mapAcompananteToFormData(acompanante) {
   return {
     nombre: acompanante.nombre,
@@ -243,10 +253,10 @@ function mapAcompananteToFormData(acompanante) {
     disponibilidadDias: acompanante.disponibilidadDias || [],
     disponibilidadTurnos: acompanante.disponibilidadTurnos || [],
     tarifaReferencia: acompanante.tarifaReferencia ?? '',
-    avatar: acompanante.avatar || '',
-    cvNombre: acompanante.cvNombre || '',
-    cvMimeType: acompanante.cvMimeType || '',
-    cvArchivo: acompanante.cvArchivo || '',
+    avatar: '',
+    cvNombre: '',
+    cvMimeType: '',
+    cvArchivo: '',
     bio: acompanante.bio || '',
     especialidades: acompanante.especialidades || [],
   };
@@ -263,13 +273,12 @@ export function Acompanantes() {
   const [filterZonaAmba, setFilterZonaAmba] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingAcompanante, setEditingAcompanante] = useState(null);
-  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [downloadingCvId, setDownloadingCvId] = useState('');
   const [confirmEstadoModal, setConfirmEstadoModal] = useState(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  const detailRequestRef = useRef(0);
 
   const [formData, setFormData] = useState(getEmptyAcompananteFormData);
+  const [assetState, setAssetState] = useState(getEmptyAcompananteAssetState);
 
   const provinciaNormalizadaForm = String(formData.provincia || '').trim().toLowerCase();
   const esCabaForm = provinciaNormalizadaForm === 'caba';
@@ -372,42 +381,28 @@ export function Acompanantes() {
   }, [baseParaConteoZonas]);
 
   const closeModal = () => {
-    detailRequestRef.current += 1;
-    setIsDetailLoading(false);
     setShowModal(false);
   };
 
-  const handleOpenModal = async (acompanante = null) => {
+  const handleOpenModal = (acompanante = null) => {
     if (!acompanante) {
       setEditingAcompanante(null);
       setFormData(getEmptyAcompananteFormData());
-      setIsDetailLoading(false);
+      setAssetState(getEmptyAcompananteAssetState());
       setShowModal(true);
       return;
     }
 
-    const requestId = detailRequestRef.current + 1;
-    detailRequestRef.current = requestId;
     setEditingAcompanante(acompanante);
-    setFormData(getEmptyAcompananteFormData());
-    setIsDetailLoading(true);
+    setFormData(mapAcompananteToFormData(acompanante));
+    setAssetState({
+      hasAvatar: Boolean(acompanante.hasAvatar),
+      hasCv: Boolean(acompanante.hasCvArchivo),
+      currentCvNombre: acompanante.cvNombre || '',
+      avatarMode: 'keep',
+      cvMode: 'keep',
+    });
     setShowModal(true);
-
-    try {
-      const detail = await adminApi.getAcompanante(acompanante.id);
-      if (detailRequestRef.current !== requestId) return;
-      setEditingAcompanante(detail);
-      setFormData(mapAcompananteToFormData(detail));
-    } catch (error) {
-      if (detailRequestRef.current !== requestId) return;
-      setShowModal(false);
-      setEditingAcompanante(null);
-      showError(error.message || 'No se pudo cargar el acompañante');
-    } finally {
-      if (detailRequestRef.current === requestId) {
-        setIsDetailLoading(false);
-      }
-    }
   };
 
   const handleSubmit = async (e) => {
@@ -423,6 +418,23 @@ export function Acompanantes() {
         tarifaReferencia: formData.tarifaReferencia === '' ? null : Number(formData.tarifaReferencia),
         zonaAmba: formData.zonaAmba || inferZonaAmba(formData.provincia, formData.zona) || null,
       };
+
+      if (assetState.avatarMode === 'replace') {
+        payload.avatar = formData.avatar || null;
+      } else if (assetState.avatarMode === 'remove') {
+        payload.avatar = null;
+      }
+
+      if (assetState.cvMode === 'replace') {
+        payload.cvNombre = formData.cvNombre || null;
+        payload.cvMimeType = formData.cvMimeType || null;
+        payload.cvArchivo = formData.cvArchivo || null;
+      } else if (assetState.cvMode === 'remove') {
+        payload.cvNombre = null;
+        payload.cvMimeType = null;
+        payload.cvArchivo = null;
+      }
+
       if (editingAcompanante) {
         const updated = await adminApi.updateAcompanante(editingAcompanante.id, payload);
         setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
@@ -450,9 +462,8 @@ export function Acompanantes() {
         return;
       }
 
-      const current = await adminApi.getAcompanante(item.id);
       const updated = await adminApi.updateAcompanante(item.id, {
-        ...current,
+        ...item,
         estado: nextEstado,
       });
       setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
@@ -464,9 +475,8 @@ export function Acompanantes() {
 
   const aprobarPerfil = async (item) => {
     try {
-      const current = await adminApi.getAcompanante(item.id);
       const updated = await adminApi.updateAcompanante(item.id, {
-        ...current,
+        ...item,
         estado: 'activo',
         estadoProceso: 'aprobado',
       });
@@ -493,6 +503,7 @@ export function Acompanantes() {
     try {
       const dataUrl = await readFileAsDataUrl(file);
       setFormData((prev) => ({ ...prev, avatar: dataUrl }));
+      setAssetState((prev) => ({ ...prev, avatarMode: 'replace' }));
     } catch (error) {
       showError(error.message || 'No se pudo cargar la imagen');
     }
@@ -521,18 +532,32 @@ export function Acompanantes() {
         cvMimeType: file.type,
         cvArchivo: dataUrl,
       }));
+      setAssetState((prev) => ({ ...prev, cvMode: 'replace' }));
     } catch (error) {
       showError(error.message || 'No se pudo cargar el CV');
     }
   };
 
+  const handleAvatarRemove = () => {
+    setFormData((prev) => ({ ...prev, avatar: '' }));
+    setAssetState((prev) => ({
+      ...prev,
+      avatarMode: editingAcompanante && prev.hasAvatar ? 'remove' : 'keep',
+    }));
+  };
+
+  const handleCvRemove = () => {
+    setFormData((prev) => ({ ...prev, cvNombre: '', cvMimeType: '', cvArchivo: '' }));
+    setAssetState((prev) => ({
+      ...prev,
+      cvMode: editingAcompanante && prev.hasCv ? 'remove' : 'keep',
+    }));
+  };
+
   const handleDownloadCv = async (acompanante) => {
     setDownloadingCvId(acompanante.id);
     try {
-      const detail = await adminApi.getAcompanante(acompanante.id);
-      if (!detail.cvArchivo) {
-        throw new Error('Este acompañante no tiene un CV adjunto.');
-      }
+      const detail = await adminApi.getAcompananteCv(acompanante.id);
 
       const link = document.createElement('a');
       link.href = detail.cvArchivo;
@@ -872,12 +897,6 @@ export function Acompanantes() {
         title={editingAcompanante ? 'Editar acompañante' : 'Nuevo acompañante'}
         size="md"
       >
-        {isDetailLoading ? (
-          <div className="py-12 text-center">
-            <p className="text-sm font-medium text-slate-700">Cargando datos del acompañante...</p>
-            <p className="text-xs text-slate-500 mt-2">Se trae el detalle solo al abrir la edición para evitar que la pantalla se cuelgue.</p>
-          </div>
-        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             label="Nombre completo"
@@ -1019,18 +1038,33 @@ export function Acompanantes() {
               onChange={handleAvatarFileChange}
               className="w-full px-4 py-2 bg-white border-2 border-light-300 rounded-xl text-dark"
             />
-            {formData.avatar && (
+            {formData.avatar ? (
               <div className="mt-3 flex items-center gap-3">
                 <img src={formData.avatar} alt="Preview" className="w-14 h-14 rounded-full object-cover border border-light-300" />
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setFormData((prev) => ({ ...prev, avatar: '' }))}
+                  onClick={handleAvatarRemove}
                 >
                   Quitar foto
                 </Button>
               </div>
+            ) : (editingAcompanante && assetState.hasAvatar && assetState.avatarMode === 'keep') ? (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                <p className="text-sm text-sky-800">La foto actual se mantiene guardada.</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleAvatarRemove}
+                >
+                  Quitar foto
+                </Button>
+              </div>
+            ) : null}
+            {editingAcompanante && assetState.hasAvatar && assetState.avatarMode === 'remove' && (
+              <p className="mt-2 text-xs text-red-600">La foto actual se eliminará al guardar.</p>
             )}
           </div>
           <div>
@@ -1041,7 +1075,7 @@ export function Acompanantes() {
               onChange={handleCvFileChange}
               className="w-full px-4 py-2 bg-white border-2 border-light-300 rounded-xl text-dark"
             />
-            {formData.cvArchivo && (
+            {formData.cvArchivo ? (
               <div className="mt-3 flex items-center gap-3">
                 <a
                   href={formData.cvArchivo}
@@ -1054,11 +1088,34 @@ export function Acompanantes() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setFormData((prev) => ({ ...prev, cvNombre: '', cvMimeType: '', cvArchivo: '' }))}
+                  onClick={handleCvRemove}
                 >
                   Quitar documento
                 </Button>
               </div>
+            ) : (editingAcompanante && assetState.hasCv && assetState.cvMode === 'keep') ? (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+                <p className="text-sm text-indigo-800">CV actual: {assetState.currentCvNombre || 'adjunto cargado'}</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleDownloadCv(editingAcompanante)}
+                >
+                  Descargar actual
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCvRemove}
+                >
+                  Quitar documento
+                </Button>
+              </div>
+            ) : null}
+            {editingAcompanante && assetState.hasCv && assetState.cvMode === 'remove' && (
+              <p className="mt-2 text-xs text-red-600">El CV actual se eliminará al guardar.</p>
             )}
           </div>
           <div className="flex gap-3 pt-4">
@@ -1075,7 +1132,6 @@ export function Acompanantes() {
             </Button>
           </div>
         </form>
-        )}
       </Modal>
     </div>
   );
