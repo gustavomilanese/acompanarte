@@ -367,8 +367,31 @@ export function Finanzas() {
       .reduce((acc, m) => acc + Number(m.monto || 0), 0);
   };
 
+  const calcularPendiente = (tipo, desde, hasta) => {
+    const [fromY, fromM] = String(desde || '').split('-').map(Number);
+    const [toY, toM] = String(hasta || '').split('-').map(Number);
+    if (!fromY || !fromM || !toY || !toM) return 0;
+
+    const fromDate = new Date(fromY, fromM - 1, 1, 0, 0, 0, 0);
+    const toDate = new Date(toY, toM, 0, 23, 59, 59, 999);
+
+    return movimientosTotales
+      .filter((m) => m.tipo === tipo)
+      .filter((m) => String(m.estado || '').toLowerCase() === 'pendiente')
+      .filter((m) => {
+        const ref = m.fechaPago ? new Date(m.fechaPago) : new Date(m.fecha);
+        return ref >= fromDate && ref <= toDate;
+      })
+      .reduce((acc, m) => acc + Number(m.monto || 0), 0);
+  };
+
   const cobradoAcumulado = useMemo(
     () => calcularAcumulado('cobro', rangoCobrosDesde, rangoCobrosHasta),
+    [movimientosTotales, rangoCobrosDesde, rangoCobrosHasta]
+  );
+
+  const pendienteCobroAcumulado = useMemo(
+    () => calcularPendiente('cobro', rangoCobrosDesde, rangoCobrosHasta),
     [movimientosTotales, rangoCobrosDesde, rangoCobrosHasta]
   );
 
@@ -461,6 +484,9 @@ export function Finanzas() {
             <CardContent>
               <p className="text-xs text-slate-500">Cobrado acumulado</p>
               <p className="text-2xl font-bold">${Number(cobradoAcumulado || 0).toLocaleString('es-AR')}</p>
+              <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+                Pendiente de cobro: ${Number(pendienteCobroAcumulado || 0).toLocaleString('es-AR')}
+              </div>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <input
                   type="month"
