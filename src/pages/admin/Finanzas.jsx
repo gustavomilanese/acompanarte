@@ -73,6 +73,8 @@ const SUMMARY_CARD_STYLES = {
   },
 };
 
+const SUMMARY_RANGE_INPUT_CLASS = 'w-full border-0 border-b border-slate-200 bg-transparent px-0 py-1 text-xs text-slate-700 outline-none focus:border-slate-400';
+
 const getCompletedEstado = (tipo) => {
   if (tipo === 'cobro') return 'cobrado';
   if (tipo === 'pago') return 'pagado';
@@ -561,19 +563,25 @@ export function Finanzas() {
               >
                 Pendiente de cobro: ${Number(pendienteCobroAcumulado || 0).toLocaleString('es-AR')}
               </button>
-              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
-                <input
-                  type="month"
-                  value={rangoCobrosDesde}
-                  onChange={(e) => setRangoCobrosDesde(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
-                <input
-                  type="month"
-                  value={rangoCobrosHasta}
-                  onChange={(e) => setRangoCobrosHasta(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
+              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Desde</span>
+                  <input
+                    type="month"
+                    value={rangoCobrosDesde}
+                    onChange={(e) => setRangoCobrosDesde(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Hasta</span>
+                  <input
+                    type="month"
+                    value={rangoCobrosHasta}
+                    onChange={(e) => setRangoCobrosHasta(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
               </div>
             </CardContent>
           </Card>
@@ -598,19 +606,25 @@ export function Finanzas() {
               >
                 Pendiente de pago: ${Number(pendientePagoAcumulado || 0).toLocaleString('es-AR')}
               </button>
-              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
-                <input
-                  type="month"
-                  value={rangoPagosDesde}
-                  onChange={(e) => setRangoPagosDesde(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
-                <input
-                  type="month"
-                  value={rangoPagosHasta}
-                  onChange={(e) => setRangoPagosHasta(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
+              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Desde</span>
+                  <input
+                    type="month"
+                    value={rangoPagosDesde}
+                    onChange={(e) => setRangoPagosDesde(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Hasta</span>
+                  <input
+                    type="month"
+                    value={rangoPagosHasta}
+                    onChange={(e) => setRangoPagosHasta(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
               </div>
             </CardContent>
           </Card>
@@ -625,19 +639,25 @@ export function Finanzas() {
                 <p className="text-xs font-medium">Retiros de socios acumulados</p>
               </div>
               <p className={`mt-3 text-2xl font-bold ${SUMMARY_CARD_STYLES[TAB_RETIROS].value}`}>${Number(retirosAcumulado || 0).toLocaleString('es-AR')}</p>
-              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
-                <input
-                  type="month"
-                  value={rangoRetirosDesde}
-                  onChange={(e) => setRangoRetirosDesde(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
-                <input
-                  type="month"
-                  value={rangoRetirosHasta}
-                  onChange={(e) => setRangoRetirosHasta(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
+              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Desde</span>
+                  <input
+                    type="month"
+                    value={rangoRetirosDesde}
+                    onChange={(e) => setRangoRetirosDesde(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Hasta</span>
+                  <input
+                    type="month"
+                    value={rangoRetirosHasta}
+                    onChange={(e) => setRangoRetirosHasta(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
               </div>
             </CardContent>
           </Card>
@@ -653,19 +673,25 @@ export function Finanzas() {
               </div>
               <p className={`mt-3 text-2xl font-bold ${SUMMARY_CARD_STYLES.caja.value}`}>${Number(cajaDisponible || 0).toLocaleString('es-AR')}</p>
               <p className={`mt-2 text-xs ${SUMMARY_CARD_STYLES.caja.hint}`}>Cobrado - pagado - retirado</p>
-              <div className="mt-2 grid grid-cols-2 gap-2" onClick={stopCardNavigation}>
-                <input
-                  type="month"
-                  value={rangoCajaDesde}
-                  onChange={(e) => setRangoCajaDesde(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
-                <input
-                  type="month"
-                  value={rangoCajaHasta}
-                  onChange={(e) => setRangoCajaHasta(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-white text-xs"
-                />
+              <div className="mt-2 grid grid-cols-2 gap-3" onClick={stopCardNavigation}>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Desde</span>
+                  <input
+                    type="month"
+                    value={rangoCajaDesde}
+                    onChange={(e) => setRangoCajaDesde(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Hasta</span>
+                  <input
+                    type="month"
+                    value={rangoCajaHasta}
+                    onChange={(e) => setRangoCajaHasta(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
               </div>
             </CardContent>
           </Card>
