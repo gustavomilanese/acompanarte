@@ -195,8 +195,9 @@ async function request(path, options = {}) {
 }
 
 export const adminApi = {
-  getAcompanantes() {
-    return request('/api/admin/acompanantes')
+  getAcompanantes(scope = 'activos') {
+    const normalizedScope = encodeURIComponent(String(scope || 'activos').trim().toLowerCase())
+    return request(`/api/admin/acompanantes?scope=${normalizedScope}`)
   },
   getAcompanante(id) {
     return request(`/api/admin/acompanantes/${id}`, {

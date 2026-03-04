@@ -171,6 +171,22 @@ function mapCaregiverDetail(item) {
   }
 }
 
+function getCaregiverAdminScopeWhere(scope) {
+  const approvedActiveWhere = {
+    estado: 'activo',
+    OR: [
+      { estadoProceso: 'aprobado' },
+      { estadoProceso: null },
+    ],
+  }
+
+  if (scope === 'base') {
+    return { NOT: approvedActiveWhere }
+  }
+
+  return approvedActiveWhere
+}
+
 function mapPatient(item) {
   return {
     id: item.id,
@@ -919,7 +935,11 @@ app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
 }))
 
 app.get('/api/admin/acompanantes', asyncHandler(async (_req, res) => {
-  const items = await prisma.caregiver.findMany({ orderBy: { nombre: 'asc' } })
+  const scope = String(_req.query?.scope || 'activos').trim().toLowerCase()
+  const items = await prisma.caregiver.findMany({
+    where: getCaregiverAdminScopeWhere(scope),
+    orderBy: { nombre: 'asc' },
+  })
   res.json(items.map(mapCaregiverSummary))
 }))
 

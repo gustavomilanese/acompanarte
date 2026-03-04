@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -206,16 +206,18 @@ function inferZonaAmba(provincia, zona) {
   return ZONA_AMBA_BY_PARTIDO[zonaNorm] || '';
 }
 
-function getEmptyAcompananteFormData() {
+function getEmptyAcompananteFormData(viewMode = 'activos') {
+  const isBaseView = viewMode === 'base';
+
   return {
     nombre: '',
     email: '',
     telefono: '',
     codigo: '',
     disponibilidad: 'mañana y tarde',
-    estado: 'activo',
+    estado: isBaseView ? 'inactivo' : 'activo',
     tipoPerfil: 'cuidador',
-    estadoProceso: 'aprobado',
+    estadoProceso: isBaseView ? 'base_datos' : 'aprobado',
     provincia: '',
     zona: '',
     zonaAmba: '',
@@ -324,6 +326,8 @@ export function Acompanantes() {
   const [confirmEstadoModal, setConfirmEstadoModal] = useState(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingList, setIsLoadingList] = useState(false);
+  const latestListRequestRef = useRef(0);
 
   const [formData, setFormData] = useState(getEmptyAcompananteFormData);
   const [assetState, setAssetState] = useState(getEmptyAcompananteAssetState);
@@ -361,25 +365,32 @@ export function Acompanantes() {
     }
   }, [location.search]);
 
-  const loadAcompanantes = useCallback(async () => {
+  const loadAcompanantes = useCallback(async (scope = 'activos') => {
+    const requestId = latestListRequestRef.current + 1;
+    latestListRequestRef.current = requestId;
+    setIsLoadingList(true);
     try {
-      const data = await adminApi.getAcompanantes();
-      setAcompanantes(data);
+      const data = await adminApi.getAcompanantes(scope);
+      if (latestListRequestRef.current === requestId) {
+        setAcompanantes(data);
+      }
     } catch (error) {
-      showError(error.message || 'No se pudieron cargar los acompañantes');
+      if (latestListRequestRef.current === requestId) {
+        showError(error.message || 'No se pudieron cargar los acompañantes');
+      }
+    } finally {
+      if (latestListRequestRef.current === requestId) {
+        setIsLoadingList(false);
+      }
     }
   }, [showError]);
 
   useEffect(() => {
-    loadAcompanantes();
-  }, [loadAcompanantes]);
+    loadAcompanantes(viewMode);
+  }, [loadAcompanantes, viewMode]);
 
   const filteredAcompanantes = useMemo(() => {
     return acompanantes.filter((a) => {
-      const isActivoAprobado = a.estado === 'activo' && (a.estadoProceso || 'aprobado') === 'aprobado';
-      if (viewMode === 'activos' && !isActivoAprobado) return false;
-      if (viewMode === 'base' && isActivoAprobado) return false;
-
       const zonaAmbaActual = a.zonaAmba || inferZonaAmba(a.provincia, a.zona);
       if (filterZonaAmba.length > 0 && !filterZonaAmba.includes(zonaAmbaActual)) return false;
 
@@ -405,17 +416,10 @@ export function Acompanantes() {
   }, [
     acompanantes,
     searchQuery,
-    viewMode,
     filterZonaAmba,
   ]);
 
-  const baseParaConteoZonas = useMemo(() => {
-    return acompanantes.filter((a) => {
-      const isActivoAprobado = a.estado === 'activo' && (a.estadoProceso || 'aprobado') === 'aprobado';
-      if (viewMode === 'activos') return isActivoAprobado;
-      return !isActivoAprobado;
-    });
-  }, [acompanantes, viewMode]);
+  const baseParaConteoZonas = acompanantes;
 
   const conteoPorZonaAmba = useMemo(() => {
     const initial = { caba: 0, zona_norte: 0, zona_sur: 0, zona_oeste: 0 };
@@ -431,7 +435,7 @@ export function Acompanantes() {
   const closeModal = () => {
     setShowModal(false);
     setEditingAcompanante(null);
-    setFormData(getEmptyAcompananteFormData());
+    setFormData(getEmptyAcompananteFormData(viewMode));
     setAssetState(getEmptyAcompananteAssetState());
     setLoadingEditId('');
   };
@@ -439,7 +443,7 @@ export function Acompanantes() {
   const handleOpenModal = async (acompanante = null) => {
     if (!acompanante) {
       setEditingAcompanante(null);
-      setFormData(getEmptyAcompananteFormData());
+      setFormData(getEmptyAcompananteFormData(viewMode));
       setAssetState(getEmptyAcompananteAssetState());
       setShowModal(true);
       return;
@@ -469,21 +473,21 @@ export function Acompanantes() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSaving(true);
+    const currentViewMode = viewMode;
 
     try {
       const payload = buildAcompanantePayload(formData, assetState);
 
       if (editingAcompanante) {
-        const updated = await adminApi.updateAcompanante(editingAcompanante.id, payload);
-        setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+        await adminApi.updateAcompanante(editingAcompanante.id, payload);
         showSuccess('Acompañante actualizado correctamente');
       } else {
-        const created = await adminApi.createAcompanante(payload);
-        setAcompanantes((prev) => [...prev, created]);
+        await adminApi.createAcompanante(payload);
         showSuccess('Acompañante creado correctamente');
       }
 
       closeModal();
+      await loadAcompanantes(currentViewMode);
     } catch (error) {
       showError(error.message || 'No se pudo guardar el acompañante');
     } finally {
@@ -493,31 +497,34 @@ export function Acompanantes() {
 
   const toggleEstado = async (item) => {
     const nextEstado = item.estado === 'activo' ? 'inactivo' : 'activo';
+    const currentViewMode = viewMode;
 
     try {
       if (nextEstado === 'inactivo') {
         await adminApi.deleteAcompanante(item.id);
-        setAcompanantes((prev) => prev.filter((a) => a.id !== item.id));
         showSuccess('Acompañante eliminado');
+        await loadAcompanantes(currentViewMode);
         return;
       }
 
-      const updated = await adminApi.updateAcompanante(item.id, { estado: nextEstado });
-      setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      await adminApi.updateAcompanante(item.id, { estado: nextEstado });
       showSuccess('Acompañante dado de alta');
+      await loadAcompanantes(currentViewMode);
     } catch (error) {
       showError(error.message || 'No se pudo cambiar el estado');
     }
   };
 
   const aprobarPerfil = async (item) => {
+    const currentViewMode = viewMode;
+
     try {
-      const updated = await adminApi.updateAcompanante(item.id, {
+      await adminApi.updateAcompanante(item.id, {
         estado: 'activo',
         estadoProceso: 'aprobado',
       });
-      setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       showSuccess('Perfil pasado a aprobados');
+      await loadAcompanantes(currentViewMode);
     } catch (error) {
       showError(error.message || 'No se pudo aprobar el perfil');
     }
@@ -632,22 +639,24 @@ export function Acompanantes() {
           <button
             type="button"
             onClick={() => setViewMode('activos')}
+            disabled={isLoadingList && viewMode !== 'activos'}
             className={`text-xs px-3 py-1.5 rounded-full border ${
               viewMode === 'activos'
                 ? 'bg-sky-600 text-white border-sky-600'
                 : 'bg-white text-slate-600 border-slate-300'
-            }`}
+            } ${isLoadingList && viewMode !== 'activos' ? 'opacity-60 cursor-wait' : ''}`}
           >
             Aprobados activos
           </button>
           <button
             type="button"
             onClick={() => setViewMode('base')}
+            disabled={isLoadingList && viewMode !== 'base'}
             className={`text-xs px-3 py-1.5 rounded-full border ${
               viewMode === 'base'
                 ? 'bg-violet-600 text-white border-violet-600'
                 : 'bg-white text-slate-600 border-slate-300'
-            }`}
+            } ${isLoadingList && viewMode !== 'base' ? 'opacity-60 cursor-wait' : ''}`}
           >
             Base de datos
           </button>
@@ -739,14 +748,21 @@ export function Acompanantes() {
         </div>
 
         <div className="space-y-3">
-          {filteredAcompanantes.length === 0 && (
+          {isLoadingList && (
+            <Card>
+              <CardContent>
+                <p className="text-sm text-slate-500">Cargando acompañantes...</p>
+              </CardContent>
+            </Card>
+          )}
+          {!isLoadingList && filteredAcompanantes.length === 0 && (
             <Card>
               <CardContent>
                 <p className="text-sm text-slate-500">Sin resultados para los filtros seleccionados.</p>
               </CardContent>
             </Card>
           )}
-          {filteredAcompanantes.map((acompanante) => (
+          {!isLoadingList && filteredAcompanantes.map((acompanante) => (
             <Card key={acompanante.id}>
               <CardContent>
                 <div className="flex items-center justify-between">
