@@ -8,6 +8,7 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   ChevronRight,
+  ChevronDown,
   Play,
   Plus,
   Check,
@@ -119,6 +120,11 @@ const PIE_COLORS = [
 ];
 const ZONAS_AMBA = ['CABA', 'Zona Norte', 'Zona Sur', 'Zona Oeste'];
 const ALTAS_POR_PAGINA = 4;
+const CURRENCY_FORMATTER = new Intl.NumberFormat('es-AR', {
+  style: 'currency',
+  currency: 'ARS',
+  maximumFractionDigits: 0,
+});
 
 function statusLabel(status) {
   switch (status) {
@@ -141,12 +147,14 @@ export function AdminDashboard() {
   const [acompanantes, setAcompanantes] = useState([]);
   const [pacientes, setPacientes] = useState([]);
   const [servicios, setServicios] = useState([]);
+  const [finanzasResumen, setFinanzasResumen] = useState(null);
   const [showNuevoServicio, setShowNuevoServicio] = useState(false);
   const [showDetalleStats, setShowDetalleStats] = useState(false);
   const [statSeleccionada, setStatSeleccionada] = useState(null);
   const [confirmDeleteServicioStats, setConfirmDeleteServicioStats] = useState(null);
   const [altasPage, setAltasPage] = useState(0);
   const [altasTab, setAltasTab] = useState('pendientes');
+  const [altasExpanded, setAltasExpanded] = useState(null);
   const [editingAltaId, setEditingAltaId] = useState(null);
   const [editingAltaDraft, setEditingAltaDraft] = useState({
     fecha: '',
@@ -216,6 +224,10 @@ export function AdminDashboard() {
     } catch (error) {
       showError(error.message || 'No se pudo cargar el dashboard');
     }
+
+    adminApi.getFinanzasResumen()
+      .then((finanzasResumenData) => setFinanzasResumen(finanzasResumenData))
+      .catch(() => setFinanzasResumen(null));
   };
 
   useEffect(() => {
@@ -411,6 +423,43 @@ export function AdminDashboard() {
   }, [altasTab]);
 
   const cuidadoresActivos = acompanantes.filter((a) => a.estado === 'activo').length;
+  const resolvedAltasExpanded = altasExpanded ?? (altasPendientes.length > 0);
+  const finanzasPeriodoLabel = finanzasResumen?.period
+    ? new Date(finanzasResumen.period.year, Number(finanzasResumen.period.month || 1) - 1, 1)
+      .toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+    : 'este mes';
+  const cajaDisponible = Number(finanzasResumen?.totalCobradoMes || 0)
+    - Number(finanzasResumen?.totalPagadoMes || 0)
+    - Number(finanzasResumen?.totalAdelantosMes || 0);
+  const resumenFinanzasCards = [
+    {
+      key: 'caja',
+      title: 'Caja disponible',
+      value: CURRENCY_FORMATTER.format(cajaDisponible),
+      hint: `${finanzasPeriodoLabel}`,
+      className: 'border-teal-200 bg-gradient-to-br from-teal-50 via-white to-white',
+      accent: 'bg-teal-500',
+      onClick: () => navigate('/admin/finanzas'),
+    },
+    {
+      key: 'cobros_pendientes',
+      title: 'Pendiente de cobro',
+      value: CURRENCY_FORMATTER.format(Number(finanzasResumen?.cobrosPendientesRegistrados || 0)),
+      hint: `${Number(finanzasResumen?.cobrosPendientes || 0)} registro${Number(finanzasResumen?.cobrosPendientes || 0) === 1 ? '' : 's'} pendiente${Number(finanzasResumen?.cobrosPendientes || 0) === 1 ? '' : 's'}`,
+      className: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white',
+      accent: 'bg-emerald-500',
+      onClick: () => navigate('/admin/finanzas'),
+    },
+    {
+      key: 'pagos_pendientes',
+      title: 'Pendiente de pago',
+      value: CURRENCY_FORMATTER.format(Number(finanzasResumen?.pagosPendientesRegistrados || 0)),
+      hint: `${Number(finanzasResumen?.pagosPendientesCuidadores || 0)} cuidador${Number(finanzasResumen?.pagosPendientesCuidadores || 0) === 1 ? '' : 'es'} pendiente${Number(finanzasResumen?.pagosPendientesCuidadores || 0) === 1 ? '' : 's'}`,
+      className: 'border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white',
+      accent: 'bg-violet-500',
+      onClick: () => navigate('/admin/finanzas'),
+    },
+  ];
 
   const statCards = [
     {
@@ -1145,6 +1194,7 @@ export function AdminDashboard() {
                 type="button"
                 onClick={() => {
                   setAltasTab('pendientes');
+                  setAltasExpanded(true);
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-sm font-semibold"
               >
@@ -1162,37 +1212,90 @@ export function AdminDashboard() {
         </Card>
 
         <div className="order-3 lg:order-2">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            {resumenFinanzasCards.map((card) => (
+              <button
+                key={card.key}
+                type="button"
+                onClick={card.onClick}
+                className={`text-left rounded-2xl border p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${card.className}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{card.title}</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p>
+                    <p className="mt-1 text-xs text-slate-500">{card.hint}</p>
+                  </div>
+                  <span className={`mt-1 h-2.5 w-2.5 rounded-full ${card.accent}`} />
+                </div>
+              </button>
+            ))}
+          </div>
+
           <Card className="bg-gradient-to-br from-white via-slate-50 to-slate-100 border border-slate-200 shadow-md rounded-2xl">
             <CardContent>
-              <div className="flex items-center justify-between mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <h3 className="font-semibold text-dark">Gestión de altas</h3>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setAltasTab('pendientes')}
-                    className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+              <button
+                type="button"
+                onClick={() => setAltasExpanded((prev) => !(prev ?? (altasPendientes.length > 0)))}
+                className="w-full flex items-center justify-between gap-3 mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left"
+              >
+                <div>
+                  <h3 className="font-semibold text-dark">Gestión de altas</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {altasPendientes.length > 0
+                      ? `${altasPendientes.length} pendiente${altasPendientes.length === 1 ? '' : 's'} para resolver`
+                      : `Sin pendientes. ${altasRealizadas.length} alta${altasRealizadas.length === 1 ? '' : 's'} realizada${altasRealizadas.length === 1 ? '' : 's'}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="hidden md:flex items-center gap-1">
+                    <span className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                       altasTab === 'pendientes'
                         ? 'bg-sky-600 text-white border-sky-600'
                         : 'bg-white/90 text-slate-600 border-slate-200'
-                    }`}
-                  >
-                    Pendientes ({altasPendientes.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAltasTab('realizadas')}
-                    className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                    }`}>
+                      Pendientes {altasPendientes.length}
+                    </span>
+                    <span className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                       altasTab === 'realizadas'
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-white/90 text-slate-600 border-slate-200'
-                    }`}
-                  >
-                    Realizadas ({altasRealizadas.length})
-                  </button>
+                    }`}>
+                      Realizadas {altasRealizadas.length}
+                    </span>
+                  </div>
+                  <ChevronDown className={`w-5 h-5 text-slate-500 transition-transform ${resolvedAltasExpanded ? 'rotate-180' : ''}`} />
                 </div>
+              </button>
+
+              {resolvedAltasExpanded ? (
+              <>
+              <div className="flex items-center gap-1 mb-4 md:hidden">
+                <button
+                  type="button"
+                  onClick={() => setAltasTab('pendientes')}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                    altasTab === 'pendientes'
+                      ? 'bg-sky-600 text-white border-sky-600'
+                      : 'bg-white/90 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  Pendientes ({altasPendientes.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAltasTab('realizadas')}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                    altasTab === 'realizadas'
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white/90 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  Realizadas ({altasRealizadas.length})
+                </button>
               </div>
 
-              <div className="space-y-3 min-h-[500px] max-h-[500px] xl:min-h-[540px] xl:max-h-[540px] overflow-y-auto pr-1">
+              <div className="space-y-3 min-h-[320px] max-h-[500px] xl:min-h-[360px] xl:max-h-[540px] overflow-y-auto pr-1">
                 {altasActivas.length === 0 && (
                   <p className="text-sm text-dark-400">
                     {altasTab === 'realizadas' ? 'No hay altas realizadas.' : 'No hay altas pendientes hoy.'}
@@ -1470,6 +1573,14 @@ export function AdminDashboard() {
                   </div>
                 )}
               </div>
+              </>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 px-4 py-6 text-sm text-slate-500">
+                  {altasPendientes.length > 0
+                    ? 'La lista está contraída. Expandila para revisar y resolver las altas pendientes.'
+                    : 'La lista está contraída para dejar más espacio al resumen del día.'}
+                </div>
+              )}
             </CardContent>
           </Card>
 
