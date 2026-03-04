@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -6,7 +6,6 @@ import {
   Pencil,
   Mail,
   Phone,
-  FileUp,
   CheckCircle,
   XCircle,
   ChevronLeft
@@ -107,6 +106,8 @@ const ZONA_AMBA_OPTIONS = [
   { value: 'zona_oeste', label: 'Zona Oeste' },
 ];
 
+const ZONA_AMBA_LABELS = Object.fromEntries(ZONA_AMBA_OPTIONS.map((item) => [item.value, item.label]));
+
 const ZONA_AMBA_BY_PARTIDO = {
   'almirante brown': 'zona_sur',
   avellaneda: 'zona_sur',
@@ -159,12 +160,16 @@ const TIPO_PERFIL_OPTIONS = [
   { value: 'otro', label: 'Otro' },
 ];
 
+const TIPO_PERFIL_LABELS = Object.fromEntries(TIPO_PERFIL_OPTIONS.map((item) => [item.value, item.label]));
+
 const ESTADO_PROCESO_OPTIONS = [
   { value: 'aprobado', label: 'Aprobado' },
   { value: 'en_evaluacion', label: 'En evaluación' },
   { value: 'base_datos', label: 'Base de datos' },
   { value: 'descartado', label: 'Descartado' },
 ];
+
+const ESTADO_PROCESO_LABELS = Object.fromEntries(ESTADO_PROCESO_OPTIONS.map((item) => [item.value, item.label]));
 
 const DISPONIBILIDAD_OPTIONS = [
   { value: 'mañana y tarde', label: 'Mañana y tarde' },
@@ -335,6 +340,8 @@ export function Acompanantes() {
   const provinciaNormalizadaForm = String(formData.provincia || '').trim().toLowerCase();
   const esCabaForm = provinciaNormalizadaForm === 'caba';
   const esBuenosAiresForm = provinciaNormalizadaForm === 'buenos aires' || provinciaNormalizadaForm === 'provincia de buenos aires';
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const deferredFilterZonaAmba = useDeferredValue(filterZonaAmba);
 
   const opcionesZonaForm = esCabaForm
     ? BARRIOS_CABA
@@ -389,14 +396,20 @@ export function Acompanantes() {
     loadAcompanantes(viewMode);
   }, [loadAcompanantes, viewMode]);
 
-  const filteredAcompanantes = useMemo(() => {
-    return acompanantes.filter((a) => {
-      const zonaAmbaActual = a.zonaAmba || inferZonaAmba(a.provincia, a.zona);
-      if (filterZonaAmba.length > 0 && !filterZonaAmba.includes(zonaAmbaActual)) return false;
+  const indexedAcompanantes = useMemo(() => acompanantes.map((a) => {
+    const resolvedZonaAmba = a.zonaAmba || inferZonaAmba(a.provincia, a.zona);
+    const zonaAmbaLabel = ZONA_AMBA_LABELS[resolvedZonaAmba] || '';
+    const tipoPerfilLabel = TIPO_PERFIL_LABELS[a.tipoPerfil] || 'Perfil';
+    const estadoProcesoKey = a.estadoProceso || 'aprobado';
+    const estadoProcesoLabel = ESTADO_PROCESO_LABELS[estadoProcesoKey] || 'Proceso';
 
-      const text = searchQuery.toLowerCase();
-      if (!text) return true;
-      const raw = [
+    return {
+      ...a,
+      resolvedZonaAmba,
+      zonaAmbaLabel,
+      tipoPerfilLabel,
+      estadoProcesoLabel,
+      searchIndex: [
         a.nombre,
         a.email,
         a.telefono,
@@ -404,33 +417,47 @@ export function Acompanantes() {
         a.zona,
         a.provincia,
         a.tipoPerfil,
-        a.zonaAmba,
-        ZONA_AMBA_OPTIONS.find((z) => z.value === zonaAmbaActual)?.label,
+        tipoPerfilLabel,
+        resolvedZonaAmba,
+        zonaAmbaLabel,
+        estadoProcesoKey,
+        estadoProcesoLabel,
         ...(Array.isArray(a.especialidades) ? a.especialidades : []),
       ]
         .filter(Boolean)
         .join(' ')
-        .toLowerCase();
-      return raw.includes(text);
+        .toLowerCase(),
+    };
+  }), [acompanantes]);
+
+  const filteredAcompanantes = useMemo(() => {
+    const text = deferredSearchQuery.toLowerCase();
+
+    return indexedAcompanantes.filter((a) => {
+      if (deferredFilterZonaAmba.length > 0 && !deferredFilterZonaAmba.includes(a.resolvedZonaAmba)) return false;
+      if (!text) return true;
+      return a.searchIndex.includes(text);
     });
   }, [
-    acompanantes,
-    searchQuery,
-    filterZonaAmba,
+    indexedAcompanantes,
+    deferredSearchQuery,
+    deferredFilterZonaAmba,
   ]);
 
-  const baseParaConteoZonas = acompanantes;
+  const baseParaConteoZonas = indexedAcompanantes;
 
   const conteoPorZonaAmba = useMemo(() => {
     const initial = { caba: 0, zona_norte: 0, zona_sur: 0, zona_oeste: 0 };
     for (const item of baseParaConteoZonas) {
-      const zone = item.zonaAmba || inferZonaAmba(item.provincia, item.zona);
-      if (zone && initial[zone] !== undefined) {
-        initial[zone] += 1;
+      if (item.resolvedZonaAmba && initial[item.resolvedZonaAmba] !== undefined) {
+        initial[item.resolvedZonaAmba] += 1;
       }
     }
     return initial;
   }, [baseParaConteoZonas]);
+
+  const isFilterTransitionPending = deferredSearchQuery !== searchQuery || deferredFilterZonaAmba !== filterZonaAmba;
+  const publicSignupLink = `${window.location.origin}/postulate-cuidador`;
 
   const closeModal = () => {
     setShowModal(false);
@@ -662,33 +689,6 @@ export function Acompanantes() {
           </button>
           <button
             type="button"
-            onClick={async () => {
-              const baseUrl = window.location.origin;
-              const link = `${baseUrl}/postulate-cuidador`;
-              try {
-                await navigator.clipboard.writeText(link);
-                showSuccess('Link público copiado');
-              } catch {
-                showError(`No se pudo copiar. Link: ${link}`);
-              }
-            }}
-            className="text-xs px-3 py-1.5 rounded-full border bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700"
-            title="Copiar link público para postulación"
-          >
-            Link postulación
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/admin/acompanantes/importar')}
-            className="text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <FileUp className="w-3.5 h-3.5" />
-              Importar CVs
-            </span>
-          </button>
-          <button
-            type="button"
             onClick={() => handleOpenModal()}
             className="ml-auto text-xs px-3 py-1.5 rounded-full border bg-sky-600 text-white border-sky-600 hover:bg-sky-700"
             title="Nuevo acompañante"
@@ -708,11 +708,13 @@ export function Acompanantes() {
                   key={item.value}
                   type="button"
                   onClick={() => {
-                    setFilterZonaAmba((prev) =>
-                      prev.includes(item.value)
-                        ? prev.filter((z) => z !== item.value)
-                        : [...prev, item.value]
-                    );
+                    startTransition(() => {
+                      setFilterZonaAmba((prev) =>
+                        prev.includes(item.value)
+                          ? prev.filter((z) => z !== item.value)
+                          : [...prev, item.value]
+                      );
+                    });
                   }}
                   className={`text-left rounded-xl border px-3 py-2 transition-colors ${
                     filterZonaAmba.includes(item.value)
@@ -745,7 +747,26 @@ export function Acompanantes() {
               className="w-full pl-10 pr-4 py-3 bg-white border-2 border-light-300 rounded-xl text-dark"
             />
           </div>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(publicSignupLink);
+                showSuccess('Link público copiado');
+              } catch {
+                showError(`No se pudo copiar. Link: ${publicSignupLink}`);
+              }
+            }}
+            className="shrink-0 px-3 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+            title="Copiar link público para postulación"
+          >
+            Copiar link de postulación
+          </button>
         </div>
+
+        {isFilterTransitionPending && (
+          <p className="text-xs text-slate-500 -mt-1">Actualizando filtros...</p>
+        )}
 
         <div className="space-y-3">
           {isLoadingList && (
@@ -802,18 +823,18 @@ export function Acompanantes() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-1.5">
                         <span className="px-2 py-0.5 rounded-full border border-violet-200 bg-violet-50">
-                          {TIPO_PERFIL_OPTIONS.find((o) => o.value === acompanante.tipoPerfil)?.label || 'Perfil'}
+                          {acompanante.tipoPerfilLabel || 'Perfil'}
                         </span>
                         <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50">
                           {(acompanante.provincia || 'Sin provincia')}{acompanante.zona ? ` · ${acompanante.zona}` : ''}
                         </span>
-                        {(acompanante.zonaAmba || inferZonaAmba(acompanante.provincia, acompanante.zona)) && (
+                        {acompanante.resolvedZonaAmba && (
                           <span className="px-2 py-0.5 rounded-full border border-indigo-200 bg-indigo-50">
-                            {ZONA_AMBA_OPTIONS.find((z) => z.value === (acompanante.zonaAmba || inferZonaAmba(acompanante.provincia, acompanante.zona)))?.label || 'AMBA'}
+                            {acompanante.zonaAmbaLabel || 'AMBA'}
                           </span>
                         )}
                         <span className="px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50">
-                          {ESTADO_PROCESO_OPTIONS.find((o) => o.value === (acompanante.estadoProceso || 'aprobado'))?.label || 'Proceso'}
+                          {acompanante.estadoProcesoLabel || 'Proceso'}
                         </span>
                       </div>
                     </div>
