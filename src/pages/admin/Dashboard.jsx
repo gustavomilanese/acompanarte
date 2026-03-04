@@ -280,10 +280,33 @@ function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) 
   return '';
 }
 
+function polarToCartesian(cx, cy, radius, angleInDegrees) {
+  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180;
+
+  return {
+    x: cx + radius * Math.cos(angleInRadians),
+    y: cy + radius * Math.sin(angleInRadians),
+  };
+}
+
+function describePieSlice(cx, cy, radius, startAngle, endAngle) {
+  const start = polarToCartesian(cx, cy, radius, endAngle);
+  const end = polarToCartesian(cx, cy, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+
+  return [
+    `M ${cx} ${cy}`,
+    `L ${start.x} ${start.y}`,
+    `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`,
+    'Z',
+  ].join(' ');
+}
+
 function DashboardZonePieChart({
   items,
   gradientPrefix,
   colors,
+  variant = 'donut',
   strokeWidth = 16,
   innerRadius = 21,
 }) {
@@ -296,9 +319,10 @@ function DashboardZonePieChart({
   const total = usedItems.reduce((acc, z) => acc + z.value, 0) || 1;
   const cx = 56;
   const cy = 56;
-  const radius = 36;
+  const radius = variant === 'pie' ? 40 : 36;
   const circumference = 2 * Math.PI * radius;
   let accumulated = 0;
+  let accumulatedAngle = 0;
 
   return (
     <div className="space-y-2.5">
@@ -312,31 +336,65 @@ function DashboardZonePieChart({
                   <stop offset="100%" stopColor={colors[idx % colors.length][1]} />
                 </linearGradient>
               ))}
+              <filter id={`${gradientPrefix}-shadow`} x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="5" stdDeviation="6" floodColor="#0f172a" floodOpacity="0.08" />
+              </filter>
             </defs>
-            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
-            {usedItems.map((item, index) => {
-              const dash = (Number(item.value || 0) / total) * circumference;
-              const gap = Math.max(circumference - dash, 0);
-              const offset = -accumulated;
-              accumulated += dash;
+            {variant === 'pie' ? (
+              <>
+                <circle cx={cx} cy={cy} r={radius + 2} fill="#f8fafc" />
+                <g filter={`url(#${gradientPrefix}-shadow)`}>
+                  {usedItems.length === 1 ? (
+                    <circle cx={cx} cy={cy} r={radius} fill={`url(#${gradientPrefix}-grad-0)`} />
+                  ) : (
+                    usedItems.map((item, index) => {
+                      const sliceAngle = (Number(item.value || 0) / total) * 360;
+                      const startAngle = accumulatedAngle;
+                      const endAngle = accumulatedAngle + sliceAngle;
+                      accumulatedAngle += sliceAngle;
 
-              return (
-                <circle
-                  key={item.zona}
-                  cx={cx}
-                  cy={cy}
-                  r={radius}
-                  fill="none"
-                  stroke={`url(#${gradientPrefix}-grad-${index})`}
-                  strokeWidth={strokeWidth}
-                  strokeLinecap="round"
-                  strokeDasharray={`${dash} ${gap}`}
-                  strokeDashoffset={offset}
-                  transform={`rotate(-90 ${cx} ${cy})`}
-                />
-              );
-            })}
-            <circle cx={cx} cy={cy} r={innerRadius} fill="#ffffff" />
+                      return (
+                        <path
+                          key={item.zona}
+                          d={describePieSlice(cx, cy, radius, startAngle, endAngle)}
+                          fill={`url(#${gradientPrefix}-grad-${index})`}
+                          stroke="#ffffff"
+                          strokeWidth="2.5"
+                          strokeLinejoin="round"
+                        />
+                      );
+                    })
+                  )}
+                </g>
+              </>
+            ) : (
+              <>
+                <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
+                {usedItems.map((item, index) => {
+                  const dash = (Number(item.value || 0) / total) * circumference;
+                  const gap = Math.max(circumference - dash, 0);
+                  const offset = -accumulated;
+                  accumulated += dash;
+
+                  return (
+                    <circle
+                      key={item.zona}
+                      cx={cx}
+                      cy={cy}
+                      r={radius}
+                      fill="none"
+                      stroke={`url(#${gradientPrefix}-grad-${index})`}
+                      strokeWidth={strokeWidth}
+                      strokeLinecap="round"
+                      strokeDasharray={`${dash} ${gap}`}
+                      strokeDashoffset={offset}
+                      transform={`rotate(-90 ${cx} ${cy})`}
+                    />
+                  );
+                })}
+                <circle cx={cx} cy={cy} r={innerRadius} fill="#ffffff" />
+              </>
+            )}
           </svg>
         </div>
       </div>
@@ -1237,8 +1295,7 @@ export function AdminDashboard() {
                   items={cuidadoresPorZona}
                   gradientPrefix="caregiver-zone"
                   colors={CAREGIVER_PIE_COLORS}
-                  strokeWidth={20}
-                  innerRadius={16}
+                  variant="pie"
                 />
               </div>
 
