@@ -569,15 +569,18 @@ export function Acompanantes() {
     }
   };
 
-  const toggleEstado = async (item) => {
-    const nextEstado = item.estado === 'activo' ? 'inactivo' : 'activo';
+  const toggleEstado = async (item, forcedNextEstado = null) => {
+    const nextEstado = forcedNextEstado || (item.estado === 'activo' ? 'inactivo' : 'activo');
     const currentViewMode = viewMode;
+    const isBaseRecord = currentViewMode === 'base' || item.estadoProceso !== 'aprobado';
 
     try {
       invalidateAcompanantesCache();
       if (nextEstado === 'inactivo') {
-        await adminApi.deleteAcompanante(item.id);
-        showSuccess('Acompañante eliminado');
+        await adminApi.updateAcompanante(item.id, isBaseRecord
+          ? { estado: 'inactivo', estadoProceso: 'descartado' }
+          : { estado: 'inactivo' });
+        showSuccess(isBaseRecord ? 'Perfil descartado' : 'Acompañante dado de baja');
         await loadAcompanantes(currentViewMode);
         return;
       }
@@ -1005,13 +1008,13 @@ export function Acompanantes() {
           {confirmEstadoModal?.nextEstado === 'inactivo' && (
             <div className="mt-3">
               <p className="text-xs text-slate-600 mb-1.5">
-                Para confirmar, escribí <strong>ELIMINAR</strong>.
+                Para confirmar, escribí <strong>BAJA</strong>.
               </p>
               <input
                 value={deleteConfirmText}
                 onChange={(e) => setDeleteConfirmText(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-red-200 bg-white text-sm"
-                placeholder="ELIMINAR"
+                placeholder="BAJA"
               />
             </div>
           )}
@@ -1032,11 +1035,11 @@ export function Acompanantes() {
             type="button"
             variant={confirmEstadoModal?.nextEstado === 'inactivo' ? 'danger' : 'primary'}
             fullWidth
-            disabled={confirmEstadoModal?.nextEstado === 'inactivo' && deleteConfirmText.trim().toUpperCase() !== 'ELIMINAR'}
+            disabled={confirmEstadoModal?.nextEstado === 'inactivo' && deleteConfirmText.trim().toUpperCase() !== 'BAJA'}
             onClick={async () => {
               try {
                 if (confirmEstadoModal?.item) {
-                  await toggleEstado(confirmEstadoModal.item);
+                  await toggleEstado(confirmEstadoModal.item, confirmEstadoModal.nextEstado);
                 }
               } finally {
                 setConfirmEstadoModal(null);

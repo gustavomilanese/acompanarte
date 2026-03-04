@@ -198,10 +198,9 @@ function mapCaregiverDetail(item) {
 function getCaregiverAdminScopeWhere(scope) {
   if (scope === 'base') {
     return {
-      OR: [
-        { estado: { not: 'activo' } },
-        { estadoProceso: { not: 'aprobado' } },
-      ],
+      estadoProceso: {
+        notIn: ['aprobado', 'descartado'],
+      },
     }
   }
 
