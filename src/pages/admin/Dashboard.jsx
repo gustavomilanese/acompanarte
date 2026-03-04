@@ -265,10 +265,13 @@ function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) 
     }
   }
 
-  for (const [keyword, zoneKey] of Object.entries({
-    ...ZONA_AMBA_BY_PARTIDO,
-    ...ZONA_AMBA_BY_LOCALITY_KEYWORD,
-  })) {
+  for (const [keyword, zoneKey] of Object.entries(ZONA_AMBA_BY_LOCALITY_KEYWORD)) {
+    if (combinedNorm.includes(normalizeDashboardText(keyword))) {
+      return ZONAS_AMBA_BY_KEY[zoneKey] || '';
+    }
+  }
+
+  for (const [keyword, zoneKey] of Object.entries(ZONA_AMBA_BY_PARTIDO)) {
     if (combinedNorm.includes(normalizeDashboardText(keyword))) {
       return ZONAS_AMBA_BY_KEY[zoneKey] || '';
     }
@@ -571,6 +574,7 @@ export function AdminDashboard() {
       const zona = resolveDashboardAmbaZone({
         provincia: parsed.provincia,
         zona: parsed.zona,
+        zonaAmba: paciente.direccion || '',
       });
       if (counts.has(zona)) counts.set(zona, (counts.get(zona) || 0) + 1);
     });
