@@ -601,6 +601,10 @@ function randomCode() {
   return String(Math.floor(1000 + Math.random() * 9000))
 }
 
+function buildExtraHoursTrackingRef() {
+  return `EXH-${Date.now()}-${randomCode()}`
+}
+
 function parseJsonSafe(text, fallback = {}) {
   try {
     return JSON.parse(text)
@@ -1545,6 +1549,147 @@ app.post('/api/admin/servicios-modulo/:id/payments', asyncHandler(async (req, re
     },
   })
   res.json(mapServicePayment(payment))
+}))
+
+app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req, res) => {
+  requireFields(req.body, ['caregiverId', 'fecha', 'horas', 'montoCobro', 'montoPago'])
+
+  const horas = Number(req.body.horas)
+  const montoCobro = Number(req.body.montoCobro)
+  const montoPago = Number(req.body.montoPago)
+  const fecha = new Date(req.body.fecha)
+
+  if (!Number.isFinite(horas) || horas <= 0) {
+    const error = new Error('La cantidad de horas extra es inválida.')
+    error.status = 400
+    throw error
+  }
+  if (!Number.isFinite(montoCobro) || montoCobro < 0) {
+    const error = new Error('El monto de cobro es inválido.')
+    error.status = 400
+    throw error
+  }
+  if (!Number.isFinite(montoPago) || montoPago < 0) {
+    const error = new Error('El monto de pago es inválido.')
+    error.status = 400
+    throw error
+  }
+  if (Number.isNaN(fecha.getTime())) {
+    const error = new Error('La fecha de la hora extra es inválida.')
+    error.status = 400
+    throw error
+  }
+
+  const detail = String(req.body.detalle || '').trim()
+  const trackingRef = buildExtraHoursTrackingRef()
+
+  const result = await prisma.$transaction(async (tx) => {
+    const service = await tx.service.findUnique({
+      where: { id: req.params.id },
+      include: {
+        paciente: { select: { id: true, nombre: true } },
+        assignments: {
+          where: { caregiverId: req.body.caregiverId, tipo: 'caregiver', activo: true },
+          select: { id: true },
+        },
+      },
+    })
+
+    if (!service) {
+      const error = new Error('Servicio no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const caregiver = await tx.caregiver.findUnique({
+      where: { id: req.body.caregiverId },
+      select: { id: true, nombre: true, estado: true },
+    })
+
+    if (!caregiver) {
+      const error = new Error('Cuidador no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const isAssignedCaregiver = service.cuidadorId === caregiver.id || service.assignments.length > 0
+    if (!isAssignedCaregiver) {
+      const error = new Error('El cuidador no está asignado a este servicio.')
+      error.status = 400
+      throw error
+    }
+
+    const year = fecha.getFullYear()
+    const month = fecha.getMonth() + 1
+    const detailSuffix = detail ? ` · ${detail}` : ''
+    const notesBase = `[#EXH:${trackingRef}] ${horas} hs${detailSuffix}`
+
+    const cobro = await tx.financeMovement.create({
+      data: {
+        tipo: 'cobro',
+        categoria: 'horas_extra',
+        metodo: 'transferencia',
+        monto: montoCobro,
+        fecha,
+        fechaPago: null,
+        year,
+        month,
+        week: null,
+        periodType: 'month',
+        estado: 'pendiente',
+        registradoPor: req.body.registradoPor || null,
+        notas: notesBase,
+        patientId: service.pacienteId,
+        serviceId: service.id,
+      },
+      include: {
+        patient: { select: { id: true, nombre: true } },
+        caregiver: { select: { id: true, nombre: true } },
+        service: { select: { id: true } },
+      },
+    })
+
+    const pago = await tx.financeMovement.create({
+      data: {
+        tipo: 'pago',
+        categoria: 'horas_extra',
+        metodo: 'transferencia',
+        monto: montoPago,
+        fecha,
+        fechaPago: null,
+        year,
+        month,
+        week: null,
+        periodType: 'month',
+        estado: 'pendiente',
+        registradoPor: req.body.registradoPor || null,
+        notas: `${notesBase} · ${caregiver.nombre}`,
+        caregiverId: caregiver.id,
+        serviceId: service.id,
+      },
+      include: {
+        patient: { select: { id: true, nombre: true } },
+        caregiver: { select: { id: true, nombre: true } },
+        service: { select: { id: true } },
+      },
+    })
+
+    await tx.serviceEvent.create({
+      data: {
+        serviceId: service.id,
+        tipo: 'assignment_changed',
+        nota: `Horas extra cargadas: ${horas} hs · ${caregiver.nombre}`,
+      },
+    })
+
+    return {
+      trackingRef,
+      cobro: mapFinanceMovement(cobro),
+      pago: mapFinanceMovement(pago),
+    }
+  })
+
+  res.status(201).json(result)
 }))
 
 app.post('/api/admin/servicios-modulo/:id/assignments', asyncHandler(async (req, res) => {

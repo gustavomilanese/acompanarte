@@ -339,6 +339,12 @@ export const adminApi = {
       body: JSON.stringify(payload),
     })
   },
+  createServicioExtraHours(id, payload) {
+    return request(`/api/admin/servicios-modulo/${id}/extra-hours`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
   getFinanzasResumen() {
     return request('/api/admin/finanzas/resumen')
   },
