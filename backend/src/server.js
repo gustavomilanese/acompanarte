@@ -176,7 +176,7 @@ function getCaregiverAdminScopeWhere(scope) {
     estado: 'activo',
     OR: [
       { estadoProceso: 'aprobado' },
-      { estadoProceso: null },
+      { estadoProceso: { equals: null } },
     ],
   }
 
