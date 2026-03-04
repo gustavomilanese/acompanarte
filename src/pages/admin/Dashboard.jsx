@@ -119,7 +119,55 @@ const PIE_COLORS = [
   ['#e2e8f0', '#f1f5f9'],
 ];
 const ZONAS_AMBA = ['CABA', 'Zona Norte', 'Zona Sur', 'Zona Oeste'];
-const ALTAS_POR_PAGINA = 4;
+const ZONAS_AMBA_BY_KEY = {
+  caba: 'CABA',
+  zona_norte: 'Zona Norte',
+  zona_sur: 'Zona Sur',
+  zona_oeste: 'Zona Oeste',
+};
+const ZONA_AMBA_BY_PARTIDO = {
+  'almirante brown': 'zona_sur',
+  avellaneda: 'zona_sur',
+  berazategui: 'zona_sur',
+  berisso: 'zona_sur',
+  brandsen: 'zona_sur',
+  campana: 'zona_norte',
+  canuelas: 'zona_sur',
+  ensenada: 'zona_sur',
+  escobar: 'zona_norte',
+  'esteban echeverria': 'zona_sur',
+  ezeiza: 'zona_sur',
+  'exaltacion de la cruz': 'zona_norte',
+  'florencio varela': 'zona_sur',
+  'general las heras': 'zona_oeste',
+  'general rodriguez': 'zona_oeste',
+  'general san martin': 'zona_norte',
+  hurlingham: 'zona_oeste',
+  ituzaingo: 'zona_oeste',
+  'jose c. paz': 'zona_norte',
+  'la matanza': 'zona_oeste',
+  'la plata': 'zona_sur',
+  lanus: 'zona_sur',
+  'lomas de zamora': 'zona_sur',
+  lujan: 'zona_oeste',
+  'malvinas argentinas': 'zona_norte',
+  'marcos paz': 'zona_oeste',
+  merlo: 'zona_oeste',
+  moreno: 'zona_oeste',
+  moron: 'zona_oeste',
+  pilar: 'zona_norte',
+  'presidente peron': 'zona_sur',
+  quilmes: 'zona_sur',
+  'san fernando': 'zona_norte',
+  'san isidro': 'zona_norte',
+  'san miguel': 'zona_norte',
+  'san vicente': 'zona_sur',
+  tigre: 'zona_norte',
+  'tres de febrero': 'zona_oeste',
+  'vicente lopez': 'zona_norte',
+  zarate: 'zona_norte',
+};
+const ALTAS_POR_PAGINA = 3;
 const DASHBOARD_FINANCE_RANGE_START = new Date(2026, 0, 1, 0, 0, 0, 0);
 const CURRENCY_FORMATTER = new Intl.NumberFormat('es-AR', {
   style: 'currency',
@@ -138,6 +186,30 @@ function statusLabel(status) {
     default:
       return 'Pendiente';
   }
+}
+
+function normalizeDashboardText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) {
+  const zonaAmbaNorm = normalizeDashboardText(zonaAmba);
+  if (ZONAS_AMBA_BY_KEY[zonaAmbaNorm]) return ZONAS_AMBA_BY_KEY[zonaAmbaNorm];
+  if (zonaAmbaNorm === 'caba' || zonaAmbaNorm.includes('capital')) return 'CABA';
+  if (zonaAmbaNorm.includes('norte')) return 'Zona Norte';
+  if (zonaAmbaNorm.includes('sur')) return 'Zona Sur';
+  if (zonaAmbaNorm.includes('oeste')) return 'Zona Oeste';
+
+  const provinciaNorm = normalizeDashboardText(provincia);
+  if (provinciaNorm === 'caba' || provinciaNorm.includes('capital federal')) return 'CABA';
+  if (provinciaNorm !== 'buenos aires' && provinciaNorm !== 'provincia de buenos aires') return '';
+
+  const zonaNorm = normalizeDashboardText(zona);
+  return ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]] || '';
 }
 
 export function AdminDashboard() {
@@ -166,12 +238,6 @@ export function AdminDashboard() {
     zona: '',
     direccionDetalle: '',
   });
-  const [caregiverSearch, setCaregiverSearch] = useState({
-    provincia: '',
-    zona: '',
-    tipo: 'cuidador',
-  });
-
   const [crearPacienteRapido, setCrearPacienteRapido] = useState(false);
   const [crearCuidadorRapido, setCrearCuidadorRapido] = useState(false);
 
@@ -311,23 +377,6 @@ export function AdminDashboard() {
     return { provincia: '', zona: partes[0] || '', direccionDetalle: '' };
   };
 
-  const irABusquedaPorZona = (servicio) => {
-    const parsed = parseDireccionServicio(servicio.direccion || servicio.paciente?.direccion || '');
-    const params = new URLSearchParams();
-    if (parsed.provincia) params.set('provincia', parsed.provincia);
-    if (parsed.zona) params.set('zona', parsed.zona);
-    params.set('tipo', 'cuidador');
-    navigate(`/admin/acompanantes?${params.toString()}`);
-  };
-
-  const ejecutarBusquedaCuidadores = () => {
-    const params = new URLSearchParams();
-    if (caregiverSearch.provincia) params.set('provincia', caregiverSearch.provincia);
-    if (caregiverSearch.zona) params.set('zona', caregiverSearch.zona);
-    if (caregiverSearch.tipo) params.set('tipo', caregiverSearch.tipo);
-    navigate(`/admin/acompanantes?${params.toString()}`);
-  };
-
   const serviciosEnCurso = useMemo(() => {
     return servicios.filter((s) => s.estado === 'en_curso');
   }, [servicios]);
@@ -363,29 +412,32 @@ export function AdminDashboard() {
     const activos = acompanantes.filter((a) => a.estado === 'activo');
     const counts = new Map(ZONAS_AMBA.map((z) => [z, 0]));
 
-    const normalizarZona = (value) => {
-      const raw = String(value || '').trim().toLowerCase();
-      if (!raw) return '';
-      if (raw === 'caba' || raw.includes('capital')) return 'CABA';
-      if (raw.includes('norte')) return 'Zona Norte';
-      if (raw.includes('sur')) return 'Zona Sur';
-      if (raw.includes('oeste')) return 'Zona Oeste';
-      return '';
-    };
-
     activos.forEach((c) => {
-      const zona = normalizarZona(c.zonaAmba) || normalizarZona(c.zona);
+      const zona = resolveDashboardAmbaZone({
+        provincia: c.provincia,
+        zona: c.zona,
+        zonaAmba: c.zonaAmba,
+      });
       if (counts.has(zona)) counts.set(zona, (counts.get(zona) || 0) + 1);
     });
 
     return ZONAS_AMBA.map((zona) => ({ zona, value: counts.get(zona) || 0 }));
   }, [acompanantes]);
 
-  const opcionesZonaBusquedaCuidadores = caregiverSearch.provincia === 'CABA'
-    ? BARRIOS_CABA
-    : (['buenos aires', 'provincia de buenos aires'].includes(String(caregiverSearch.provincia || '').trim().toLowerCase()))
-      ? PARTIDOS_GBA
-      : [];
+  const pacientesPorZona = useMemo(() => {
+    const counts = new Map(ZONAS_AMBA.map((z) => [z, 0]));
+
+    pacientes.forEach((paciente) => {
+      const parsed = parseDireccionServicio(paciente.direccion || '');
+      const zona = resolveDashboardAmbaZone({
+        provincia: parsed.provincia,
+        zona: parsed.zona,
+      });
+      if (counts.has(zona)) counts.set(zona, (counts.get(zona) || 0) + 1);
+    });
+
+    return ZONAS_AMBA.map((zona) => ({ zona, value: counts.get(zona) || 0 }));
+  }, [pacientes]);
 
   const serviciosHoyOrdenados = [...serviciosHoy].sort(
     (a, b) => new Date(a.fechaInicio) - new Date(b.fechaInicio)
@@ -1031,68 +1083,7 @@ export function AdminDashboard() {
                 </button>
               ))}
             </div>
-            <Card className="mt-12 bg-gradient-to-r from-slate-100 via-white to-slate-100 border border-slate-200 shadow-md rounded-2xl">
-              <CardContent>
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <p className="text-sm font-semibold text-slate-700">Búsqueda de cuidadores</p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => navigate('/admin/acompanantes')}
-                      className="text-xs text-slate-600 font-medium"
-                    >
-                      Ver base completa
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-2.5">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                    <select
-                      value={caregiverSearch.provincia}
-                      onChange={(e) => setCaregiverSearch((prev) => ({ ...prev, provincia: e.target.value, zona: '' }))}
-                      className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-700"
-                    >
-                      <option value="">Provincia</option>
-                      {PROVINCIAS_ARG.map((prov) => (
-                        <option key={prov} value={prov}>{prov}</option>
-                      ))}
-                    </select>
-                    <input
-                      list="zonas-busqueda-dashboard"
-                      value={caregiverSearch.zona}
-                      onChange={(e) => setCaregiverSearch((prev) => ({ ...prev, zona: e.target.value }))}
-                      className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-700"
-                      placeholder="Zona / barrio / partido"
-                    />
-                    <datalist id="zonas-busqueda-dashboard">
-                      {opcionesZonaBusquedaCuidadores.map((z) => (
-                        <option key={z} value={z} />
-                      ))}
-                    </datalist>
-                    <select
-                      value={caregiverSearch.tipo}
-                      onChange={(e) => setCaregiverSearch((prev) => ({ ...prev, tipo: e.target.value }))}
-                      className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-700"
-                    >
-                      <option value="cuidador">Cuidador</option>
-                      <option value="masajista">Masajista</option>
-                      <option value="kinesiologo">Kinesiólogo</option>
-                      <option value="enfermero">Enfermero/a</option>
-                      <option value="acompanante_terapeutico">Acomp. terapéutico</option>
-                      <option value="otro">Otro</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={ejecutarBusquedaCuidadores}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-700 bg-slate-700 text-white text-xs font-semibold hover:bg-slate-800"
-                    >
-                      Buscar
-                    </button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-12">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-3 gap-3 mt-12">
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-white shadow-sm p-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Altas por mes</p>
                 <div className="h-32 flex items-end gap-2">
@@ -1173,6 +1164,83 @@ export function AdminDashboard() {
                           </div>
                           <div className="space-y-1">
                             {cuidadoresPorZona.map((z, index) => (
+                              <div key={z.zona} className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                                    style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length][0] }}
+                                  />
+                                  <span className="text-xs text-slate-600 truncate">{z.zona}</span>
+                                </div>
+                                <span className="text-xs text-slate-700 font-medium">
+                                  {z.value} ({Math.round((z.value / total) * 100)}%)
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-3">
+                <p className="text-sm font-semibold text-slate-700 mb-3">Pacientes por zona</p>
+                {pacientesPorZona.every((z) => z.value === 0) ? (
+                  <p className="text-xs text-slate-400">Sin datos de zona.</p>
+                ) : (
+                  <div className="grid grid-cols-[110px_1fr] gap-3 items-center">
+                    {(() => {
+                      const total = pacientesPorZona.reduce((acc, z) => acc + z.value, 0) || 1;
+                      const cx = 55;
+                      const cy = 55;
+                      const radius = 34;
+                      const circumference = 2 * Math.PI * radius;
+                      let accumulated = 0;
+
+                      return (
+                        <>
+                          <div className="relative w-[110px] h-[110px]">
+                            <svg width="110" height="110" viewBox="0 0 110 110">
+                              <defs>
+                                {PIE_COLORS.map((pair, idx) => (
+                                  <linearGradient key={`patient-zona-grad-${idx}`} id={`patient-zona-grad-${idx}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stopColor={pair[0]} />
+                                    <stop offset="100%" stopColor={pair[1]} />
+                                  </linearGradient>
+                                ))}
+                              </defs>
+                              <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="18" />
+                              {pacientesPorZona.map((z, index) => {
+                                const value = Number(z.value || 0);
+                                if (value <= 0) return null;
+                                const dash = (value / total) * circumference;
+                                const gap = Math.max(circumference - dash, 0);
+                                const offset = -accumulated;
+                                accumulated += dash;
+
+                                return (
+                                  <circle
+                                    key={z.zona}
+                                    cx={cx}
+                                    cy={cy}
+                                    r={radius}
+                                    fill="none"
+                                    stroke={`url(#patient-zona-grad-${index % PIE_COLORS.length})`}
+                                    strokeWidth="18"
+                                    strokeLinecap="round"
+                                    strokeDasharray={`${dash} ${gap}`}
+                                    strokeDashoffset={offset}
+                                    transform={`rotate(-90 ${cx} ${cy})`}
+                                  />
+                                );
+                              })}
+                              <circle cx={cx} cy={cy} r={20} fill="#ffffff" />
+                            </svg>
+                          </div>
+                          <div className="space-y-1">
+                            {pacientesPorZona.map((z, index) => (
                               <div key={z.zona} className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2 min-w-0">
                                   <span
