@@ -606,8 +606,8 @@ export function Acompanantes() {
     }
   };
 
-  const requestToggleEstado = (item) => {
-    const nextEstado = item.estado === 'activo' ? 'inactivo' : 'activo';
+  const requestToggleEstado = (item, forcedNextEstado = null) => {
+    const nextEstado = forcedNextEstado || (item.estado === 'activo' ? 'inactivo' : 'activo');
     setDeleteConfirmText('');
     setConfirmEstadoModal({ item, nextEstado });
   };
@@ -916,6 +916,16 @@ export function Acompanantes() {
                         Aprobar
                       </button>
                     )}
+                    {viewMode === 'base' && acompanante.estado !== 'activo' && (
+                      <button
+                        onClick={() => requestToggleEstado(acompanante, 'inactivo')}
+                        className="px-3 py-2 rounded-lg transition-colors text-sm font-medium inline-flex items-center gap-2 bg-red-100 text-red-700 hover:bg-red-200"
+                        title="Dar de baja"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        Dar de baja
+                      </button>
+                    )}
                     <button
                       onClick={() => requestToggleEstado(acompanante)}
                       className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium inline-flex items-center gap-2 ${
@@ -923,12 +933,12 @@ export function Acompanantes() {
                           ? 'bg-red-100 text-red-700 hover:bg-red-200'
                           : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
                       }`}
-                      title={acompanante.estado === 'activo' ? 'Eliminar' : 'Dar de alta'}
+                      title={acompanante.estado === 'activo' ? 'Dar de baja' : 'Dar de alta'}
                     >
                       {acompanante.estado === 'activo' ? (
                         <>
                           <XCircle className="w-4 h-4" />
-                          Eliminar
+                          Dar de baja
                         </>
                       ) : (
                         <>
@@ -1033,7 +1043,7 @@ export function Acompanantes() {
               }
             }}
           >
-            {confirmEstadoModal?.nextEstado === 'inactivo' ? 'Eliminar' : 'Dar de alta'}
+            {confirmEstadoModal?.nextEstado === 'inactivo' ? 'Dar de baja' : 'Dar de alta'}
           </Button>
         </div>
       </Modal>
