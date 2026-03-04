@@ -577,10 +577,13 @@ export function Acompanantes() {
     try {
       invalidateAcompanantesCache();
       if (nextEstado === 'inactivo') {
-        await adminApi.updateAcompanante(item.id, isBaseRecord
-          ? { estado: 'inactivo', estadoProceso: 'descartado' }
-          : { estado: 'inactivo' });
-        showSuccess(isBaseRecord ? 'Perfil descartado' : 'Acompañante dado de baja');
+        await adminApi.updateAcompanante(
+          item.id,
+          isBaseRecord
+            ? { estado: 'inactivo', estadoProceso: 'descartado' }
+            : { estado: 'inactivo', estadoProceso: 'base_datos' },
+        );
+        showSuccess(isBaseRecord ? 'Perfil descartado' : 'Perfil movido a base de datos');
         await loadAcompanantes(currentViewMode);
         return;
       }
