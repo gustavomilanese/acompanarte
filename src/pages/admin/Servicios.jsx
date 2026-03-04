@@ -22,6 +22,7 @@ const STATUS_LABEL = {
 };
 
 const METODOS_PAGO = ['transferencia', 'mercado_pago', 'efectivo', 'electronica'];
+const EXTRA_HOURS_CATEGORY = 'horas_extra';
 
 function badgeByStatus(status) {
   const by = {
@@ -79,6 +80,28 @@ function operationsPanelByStatus(status) {
   return by[status] || 'border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50';
 }
 
+function buildExtraHoursNotes(hours, notes = '') {
+  const normalized = Number(hours);
+  const hoursLabel = Number.isFinite(normalized)
+    ? String(normalized).replace('.', ',')
+    : String(hours || '').trim();
+  const extraDetail = String(notes || '').trim();
+  return extraDetail
+    ? `Horas extra: ${hoursLabel} hs · ${extraDetail}`
+    : `Horas extra: ${hoursLabel} hs`;
+}
+
+function parseExtraHoursInfo(mov) {
+  const raw = String(mov?.notas || '').trim();
+  const match = raw.match(/horas?\s+extra:\s*([\d.,]+)\s*hs?/i) || raw.match(/([\d.,]+)\s*hs?\s*extra/i);
+  const hours = match ? Number(String(match[1]).replace(',', '.')) : null;
+  let detail = raw;
+  if (match) {
+    detail = raw.replace(match[0], '').replace(/^[·:,\-\s]+/, '').trim();
+  }
+  return { hours, detail };
+}
+
 export function Servicios() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -105,6 +128,13 @@ export function Servicios() {
     monto: '',
     metodo: 'transferencia',
     fechaPago: '',
+    notas: '',
+  });
+  const [extraHoursEditorOpen, setExtraHoursEditorOpen] = useState(false);
+  const [extraHoursForm, setExtraHoursForm] = useState({
+    fecha: new Date().toISOString().slice(0, 10),
+    horas: '',
+    monto: '',
     notas: '',
   });
   const [assignmentForm, setAssignmentForm] = useState({
@@ -188,8 +218,19 @@ export function Servicios() {
   const pagosServicio = useMemo(() => {
     if (!selectedDetail) return [];
     return movimientosFinanzas
-      .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id)
+      .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id && m.categoria !== EXTRA_HOURS_CATEGORY)
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  }, [selectedDetail, movimientosFinanzas]);
+
+  const extraHoursServicio = useMemo(() => {
+    if (!selectedDetail) return [];
+    return movimientosFinanzas
+      .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
+      .sort((a, b) => new Date(b.fecha || b.createdAt || 0) - new Date(a.fecha || a.createdAt || 0))
+      .map((mov) => ({
+        ...mov,
+        extraInfo: parseExtraHoursInfo(mov),
+      }));
   }, [selectedDetail, movimientosFinanzas]);
 
   const refreshAll = async () => {
@@ -207,6 +248,15 @@ export function Servicios() {
       monto: '',
       metodo: 'transferencia',
       fechaPago: '',
+      notas: '',
+    });
+  };
+
+  const resetExtraHoursForm = () => {
+    setExtraHoursForm({
+      fecha: new Date().toISOString().slice(0, 10),
+      horas: '',
+      monto: '',
       notas: '',
     });
   };
@@ -264,6 +314,50 @@ export function Servicios() {
       await refreshAll();
     } catch (error) {
       showError(error.message || 'No se pudo registrar el período');
+    }
+  };
+
+  const submitExtraHours = async (e) => {
+    e.preventDefault();
+    if (!selectedDetail) return;
+
+    try {
+      if (!extraHoursForm.fecha) {
+        showError('Seleccioná la fecha de la hora extra');
+        return;
+      }
+      if (!extraHoursForm.horas) {
+        showError('Completá la cantidad de horas extra');
+        return;
+      }
+      if (!extraHoursForm.monto) {
+        showError('Completá el monto a facturar');
+        return;
+      }
+
+      const fechaExtra = new Date(`${extraHoursForm.fecha}T12:00:00`);
+      await adminApi.createFinanzasMovimiento({
+        tipo: 'cobro',
+        categoria: EXTRA_HOURS_CATEGORY,
+        metodo: 'transferencia',
+        monto: Number(extraHoursForm.monto),
+        fecha: fechaExtra.toISOString(),
+        fechaPago: null,
+        estado: 'pendiente',
+        notas: buildExtraHoursNotes(extraHoursForm.horas, extraHoursForm.notas),
+        patientId: selectedDetail.pacienteId,
+        serviceId: selectedDetail.id,
+        periodType: 'month',
+        year: fechaExtra.getFullYear(),
+        month: fechaExtra.getMonth() + 1,
+        week: null,
+      });
+      showSuccess('Hora extra registrada para facturación');
+      setExtraHoursEditorOpen(false);
+      resetExtraHoursForm();
+      await refreshAll();
+    } catch (error) {
+      showError(error.message || 'No se pudo registrar la hora extra');
     }
   };
 
@@ -611,6 +705,142 @@ export function Servicios() {
                             </Button>
                           </div>
                         ))}
+                      </div>
+                    </section>
+
+                    <section className="border-t border-slate-200 pt-5">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-semibold text-slate-700">Horas extra por facturar</p>
+                        {selectedDetail.estado !== 'cancelado' && selectedDetail.estado !== 'completado' ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExtraHoursEditorOpen((prev) => !prev);
+                              if (extraHoursEditorOpen) resetExtraHoursForm();
+                            }}
+                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                            title={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
+                            aria-label={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-slate-500 mb-3">Se registran como cobro pendiente del servicio para facturarlas más adelante.</p>
+
+                      {extraHoursEditorOpen && (
+                        <form onSubmit={submitExtraHours} className="rounded-xl border border-amber-100 bg-white p-3 mb-3 space-y-2">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <input
+                              type="date"
+                              value={extraHoursForm.fecha}
+                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, fecha: e.target.value }))}
+                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                              required
+                            />
+                            <input
+                              type="number"
+                              min="0.5"
+                              step="0.5"
+                              value={extraHoursForm.horas}
+                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, horas: e.target.value }))}
+                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                              placeholder="Horas extra"
+                              required
+                            />
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={extraHoursForm.monto}
+                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, monto: e.target.value }))}
+                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                              placeholder="Monto a facturar"
+                              required
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                            <input
+                              value={extraHoursForm.notas}
+                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, notas: e.target.value }))}
+                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                              placeholder="Detalle opcional"
+                            />
+                            <Button type="submit" size="sm" className="h-full">
+                              Guardar hora extra
+                            </Button>
+                          </div>
+                        </form>
+                      )}
+
+                      <div className="rounded-xl border border-amber-100 overflow-hidden bg-white mb-5">
+                        <table className="w-full text-sm">
+                          <thead className="bg-amber-50">
+                            <tr className="text-left text-slate-600">
+                              <th className="px-3 py-2 font-semibold">Fecha</th>
+                              <th className="px-3 py-2 font-semibold">Horas</th>
+                              <th className="px-3 py-2 font-semibold">Monto</th>
+                              <th className="px-3 py-2 font-semibold">Estado</th>
+                              <th className="px-3 py-2 font-semibold">Detalle</th>
+                              <th className="px-3 py-2 font-semibold text-right">Acciones</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {extraHoursServicio.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
+                              </tr>
+                            )}
+                            {extraHoursServicio.map((mov) => (
+                              <tr key={mov.id} className="border-t border-amber-100">
+                                <td className="px-3 py-2 text-slate-600">
+                                  {mov.fecha ? format(new Date(mov.fecha), 'dd/MM/yyyy') : '-'}
+                                </td>
+                                <td className="px-3 py-2">{mov.extraInfo.hours ? `${mov.extraInfo.hours} hs` : '-'}</td>
+                                <td className="px-3 py-2">${Number(mov.monto || 0).toLocaleString('es-AR')}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`text-xs px-2 py-1 rounded-full border ${
+                                    String(mov.estado).toLowerCase() === 'pagado'
+                                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                                      : 'bg-amber-100 text-amber-700 border-amber-200'
+                                  }`}>
+                                    {String(mov.estado).toLowerCase() === 'pagado' ? 'Pagado' : 'Pendiente'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-slate-500">{mov.extraInfo.detail || '-'}</td>
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => updatePaymentStatus(mov, 'pagado')}
+                                      className="text-xs px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                    >
+                                      Pagado
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updatePaymentStatus(mov, 'pendiente')}
+                                      className="text-xs px-2.5 py-1 rounded-md border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                                    >
+                                      Pendiente
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await adminApi.deleteFinanzasMovimiento(mov.id);
+                                        showSuccess('Hora extra eliminada');
+                                        await refreshAll();
+                                      }}
+                                      className="text-xs px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                    >
+                                      Eliminar
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </section>
 
