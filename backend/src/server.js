@@ -578,6 +578,52 @@ const CAREGIVER_SIGNUP_ALLOWED_CV_MIME = new Set([
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ])
+const MIN_CV_ARCHIVO_SUPPORTED_CHARS = 11_000_000
+let caregiverCvColumnEnsurePromise = null
+let caregiverCvColumnEnsured = false
+
+async function ensureCaregiverCvArchivoColumnCapacity({ force = false } = {}) {
+  if (!force && caregiverCvColumnEnsured) return
+  if (caregiverCvColumnEnsurePromise) {
+    await caregiverCvColumnEnsurePromise
+    return
+  }
+
+  caregiverCvColumnEnsurePromise = (async () => {
+    const rows = await prisma.$queryRaw`
+      SELECT DATA_TYPE AS dataType, CHARACTER_MAXIMUM_LENGTH AS maxLen
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'Caregiver'
+        AND COLUMN_NAME = 'cvArchivo'
+      LIMIT 1
+    `
+
+    const column = Array.isArray(rows) ? rows[0] : null
+    if (!column) {
+      caregiverCvColumnEnsured = true
+      return
+    }
+
+    const dataType = String(column.dataType || '').toLowerCase()
+    const maxLenRaw = column.maxLen === null || column.maxLen === undefined ? null : Number(column.maxLen)
+    const maxLen = Number.isFinite(maxLenRaw) ? maxLenRaw : null
+    const alreadyLargeText = ['longtext', 'mediumtext', 'text'].includes(dataType)
+    const alreadyEnoughVarchar = maxLen !== null && maxLen >= MIN_CV_ARCHIVO_SUPPORTED_CHARS
+
+    if (!alreadyLargeText && !alreadyEnoughVarchar) {
+      await prisma.$executeRawUnsafe('ALTER TABLE `Caregiver` MODIFY COLUMN `cvArchivo` LONGTEXT NULL')
+      console.log('[startup] migrated Caregiver.cvArchivo to LONGTEXT')
+    }
+
+    caregiverCvColumnEnsured = true
+  })()
+    .finally(() => {
+      caregiverCvColumnEnsurePromise = null
+    })
+
+  await caregiverCvColumnEnsurePromise
+}
 
 function enforceCaregiverSignupRateLimit(req) {
   const ip = getRequestIp(req)
@@ -1172,6 +1218,14 @@ app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
     throw error
   }
 
+  if (cvArchivo) {
+    try {
+      await ensureCaregiverCvArchivoColumnCapacity()
+    } catch (columnError) {
+      console.error('[caregiver-signup] failed to ensure cvArchivo column capacity', columnError)
+    }
+  }
+
   const duplicate = await prisma.caregiver.findFirst({
     where: {
       OR: [
@@ -1267,6 +1321,13 @@ app.get('/api/admin/acompanantes/:id/cv', asyncHandler(async (req, res) => {
 
 app.post('/api/admin/acompanantes', asyncHandler(async (req, res) => {
   const data = toCaregiverInput(req.body)
+  if (data.cvArchivo) {
+    try {
+      await ensureCaregiverCvArchivoColumnCapacity()
+    } catch (columnError) {
+      console.error('[admin-caregiver-create] failed to ensure cvArchivo column capacity', columnError)
+    }
+  }
   const item = await prisma.caregiver.create({ data })
   res.status(201).json(mapCaregiverSummary(item))
 }))
@@ -1274,6 +1335,13 @@ app.post('/api/admin/acompanantes', asyncHandler(async (req, res) => {
 app.put('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
   const existing = await prisma.caregiver.findUniqueOrThrow({ where: { id: req.params.id } })
   const data = toCaregiverInput(mergeCaregiverForUpdate(existing, req.body || {}))
+  if (data.cvArchivo) {
+    try {
+      await ensureCaregiverCvArchivoColumnCapacity()
+    } catch (columnError) {
+      console.error('[admin-caregiver-update] failed to ensure cvArchivo column capacity', columnError)
+    }
+  }
   const item = await prisma.caregiver.update({ where: { id: req.params.id }, data })
   res.json(mapCaregiverSummary(item))
 }))
@@ -1284,6 +1352,14 @@ app.post('/api/admin/acompanantes/import-bulk', asyncHandler(async (req, res) =>
     const error = new Error('No se recibieron registros para importar.')
     error.status = 400
     throw error
+  }
+
+  if (rows.some((row) => String(row?.cvArchivo || '').trim())) {
+    try {
+      await ensureCaregiverCvArchivoColumnCapacity()
+    } catch (columnError) {
+      console.error('[admin-caregiver-import] failed to ensure cvArchivo column capacity', columnError)
+    }
   }
 
   const results = []
@@ -2482,6 +2558,14 @@ app.get('/api/admin/finanzas/resumen', asyncHandler(async (_req, res) => {
 app.use((error, _req, res, _next) => {
   const status = error.status || 500
 
+  if (error.code === 'P2000') {
+    const column = String(error.meta?.column_name || error.meta?.columnName || '')
+    if (column.toLowerCase().includes('cvarchivo')) {
+      return res.status(400).json({ error: 'El archivo adjunto no se pudo guardar. Probá de nuevo en unos minutos o subí un archivo más liviano.' })
+    }
+    return res.status(400).json({ error: 'Uno de los campos supera el tamaño permitido.' })
+  }
+
   if (error.code === 'P2002') {
     const target = Array.isArray(error.meta?.target) ? error.meta.target.join(', ') : null
     if (target?.includes('email')) {
@@ -2512,6 +2596,11 @@ async function start() {
       dbHealth.connected = true
       dbHealth.error = null
       console.log('[startup] database connection OK')
+      try {
+        await ensureCaregiverCvArchivoColumnCapacity()
+      } catch (schemaError) {
+        console.error(`[startup] caregiver cv column check failed: ${schemaError.message}`)
+      }
     } catch (error) {
       dbHealth.connected = false
       dbHealth.error = error.message

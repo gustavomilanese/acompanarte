@@ -28,7 +28,7 @@ model Caregiver {
   avatar         String?
   cvNombre       String?
   cvMimeType     String?
-  cvArchivo      String?
+  cvArchivo      String?   @db.LongText
   bio            String?
   especialidades Json
   createdAt      DateTime  @default(now())
