@@ -1212,8 +1212,18 @@ export function AdminDashboard() {
                 </button>
               ))}
             </div>
-            <div className="hidden md:grid grid-cols-1 md:grid-cols-3 gap-3 mt-12">
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-white shadow-sm p-3">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-12">
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-lime-50/30 to-emerald-50/30 shadow-sm p-4">
+                <p className="text-sm font-semibold text-slate-700 mb-3">Cuidadores por zona</p>
+                <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" />
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-4">
+                <p className="text-sm font-semibold text-slate-700 mb-3">Pacientes por zona</p>
+                <DashboardZonePieChart items={pacientesPorZona} gradientPrefix="patient-zone" />
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-white shadow-sm p-3 md:col-span-2">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Altas por mes</p>
                 <div className="h-32 flex items-end gap-2">
                   {(() => {
@@ -1235,16 +1245,6 @@ export function AdminDashboard() {
                     ));
                   })()}
                 </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-lime-50/30 to-emerald-50/30 shadow-sm p-4 md:col-span-2">
-                <p className="text-sm font-semibold text-slate-700 mb-3">Cuidadores por zona</p>
-                <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" />
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-4 md:col-span-3">
-                <p className="text-sm font-semibold text-slate-700 mb-3">Pacientes por zona</p>
-                <DashboardZonePieChart items={pacientesPorZona} gradientPrefix="patient-zone" />
               </div>
             </div>
 
