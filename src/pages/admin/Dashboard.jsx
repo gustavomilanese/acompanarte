@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Users,
   UserCheck,
-  TrendingUp,
   ClipboardList,
   ArrowDownCircle,
   ArrowUpCircle,
@@ -117,6 +116,18 @@ const PIE_COLORS = [
   ['#f7cf7a', '#fde7b0'],
   ['#9ad7ff', '#cbeafe'],
   ['#e2e8f0', '#f1f5f9'],
+];
+const CAREGIVER_PIE_COLORS = [
+  ['#22c55e', '#86efac'],
+  ['#0ea5e9', '#7dd3fc'],
+  ['#14b8a6', '#99f6e4'],
+  ['#6366f1', '#c7d2fe'],
+];
+const PATIENT_PIE_COLORS = [
+  ['#f59e0b', '#fcd34d'],
+  ['#f97316', '#fdba74'],
+  ['#ef4444', '#fca5a5'],
+  ['#fb7185', '#fecdd3'],
 ];
 const ZONAS_AMBA = ['CABA', 'Zona Norte', 'Zona Sur', 'Zona Oeste'];
 const ZONAS_AMBA_BY_KEY = {
@@ -238,14 +249,13 @@ function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) 
 
   const provinciaNorm = normalizeDashboardText(provincia);
   if (provinciaNorm === 'caba' || provinciaNorm.includes('capital federal')) return 'CABA';
-  if (provinciaNorm !== 'buenos aires' && provinciaNorm !== 'provincia de buenos aires') return '';
 
   const zonaNorm = normalizeDashboardText(zona);
-  if (ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]]) {
+  if ((provinciaNorm === 'buenos aires' || provinciaNorm === 'provincia de buenos aires') && ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]]) {
     return ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]];
   }
 
-  const combinedText = `${provincia} ${zona}`.trim();
+  const combinedText = `${provincia} ${zona} ${zonaAmba}`.trim();
   const combinedNorm = normalizeDashboardText(combinedText);
   if (!combinedNorm) return '';
 
@@ -267,7 +277,7 @@ function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) 
   return '';
 }
 
-function DashboardZonePieChart({ items, gradientPrefix }) {
+function DashboardZonePieChart({ items, gradientPrefix, colors }) {
   const usedItems = items.filter((item) => Number(item.value || 0) > 0);
 
   if (usedItems.length === 0) {
@@ -275,26 +285,26 @@ function DashboardZonePieChart({ items, gradientPrefix }) {
   }
 
   const total = usedItems.reduce((acc, z) => acc + z.value, 0) || 1;
-  const cx = 72;
-  const cy = 72;
-  const radius = 48;
+  const cx = 64;
+  const cy = 64;
+  const radius = 42;
   const circumference = 2 * Math.PI * radius;
   let accumulated = 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex justify-center">
-        <div className="relative h-[144px] w-[144px]">
-          <svg width="144" height="144" viewBox="0 0 144 144">
+        <div className="relative h-[128px] w-[128px]">
+          <svg width="128" height="128" viewBox="0 0 128 128">
             <defs>
               {usedItems.map((item, idx) => (
                 <linearGradient key={`${gradientPrefix}-grad-${item.zona}`} id={`${gradientPrefix}-grad-${idx}`} x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor={PIE_COLORS[idx % PIE_COLORS.length][0]} />
-                  <stop offset="100%" stopColor={PIE_COLORS[idx % PIE_COLORS.length][1]} />
+                  <stop offset="0%" stopColor={colors[idx % colors.length][0]} />
+                  <stop offset="100%" stopColor={colors[idx % colors.length][1]} />
                 </linearGradient>
               ))}
             </defs>
-            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="22" />
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="18" />
             {usedItems.map((item, index) => {
               const dash = (Number(item.value || 0) / total) * circumference;
               const gap = Math.max(circumference - dash, 0);
@@ -309,7 +319,7 @@ function DashboardZonePieChart({ items, gradientPrefix }) {
                   r={radius}
                   fill="none"
                   stroke={`url(#${gradientPrefix}-grad-${index})`}
-                  strokeWidth="22"
+                  strokeWidth="18"
                   strokeLinecap="round"
                   strokeDasharray={`${dash} ${gap}`}
                   strokeDashoffset={offset}
@@ -317,7 +327,7 @@ function DashboardZonePieChart({ items, gradientPrefix }) {
                 />
               );
             })}
-            <circle cx={cx} cy={cy} r={28} fill="#ffffff" />
+            <circle cx={cx} cy={cy} r={24} fill="#ffffff" />
           </svg>
         </div>
       </div>
@@ -327,7 +337,7 @@ function DashboardZonePieChart({ items, gradientPrefix }) {
             <div className="flex items-center gap-2 min-w-0">
               <span
                 className="h-2.5 w-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length][0] }}
+                style={{ backgroundColor: colors[index % colors.length][0] }}
               />
               <span className="text-xs text-slate-600 truncate">{item.zona}</span>
             </div>
@@ -1212,15 +1222,15 @@ export function AdminDashboard() {
                 </button>
               ))}
             </div>
-            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-12">
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-lime-50/30 to-emerald-50/30 shadow-sm p-4">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-8">
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-emerald-50/20 to-teal-50/20 shadow-sm p-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Cuidadores por zona</p>
-                <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" />
+                <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" colors={CAREGIVER_PIE_COLORS} />
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-4">
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Pacientes por zona</p>
-                <DashboardZonePieChart items={pacientesPorZona} gradientPrefix="patient-zone" />
+                <DashboardZonePieChart items={pacientesPorZona} gradientPrefix="patient-zone" colors={PATIENT_PIE_COLORS} />
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-white shadow-sm p-3 md:col-span-2">
@@ -1683,7 +1693,7 @@ export function AdminDashboard() {
 
         </div>
 
-        <div className="order-4 lg:order-3 lg:col-span-2 grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="order-4 lg:order-3 lg:col-span-2 grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card
             hover
             onClick={() => navigate('/admin/servicios')}
@@ -1735,25 +1745,6 @@ export function AdminDashboard() {
                 <div>
                   <p className="font-semibold text-dark">Cuidadores</p>
                   <p className="text-sm text-slate-500">Gestionar equipo</p>
-                </div>
-              </div>
-              <ChevronRight className="w-5 h-5 text-dark-300" />
-            </CardContent>
-          </Card>
-
-          <Card
-            hover
-            onClick={() => navigate('/admin/calendario')}
-            className="bg-white border border-slate-200 shadow-sm"
-          >
-            <CardContent className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-slate-700" />
-                </div>
-                <div>
-                  <p className="font-semibold text-dark">Vista calendario</p>
-                  <p className="text-sm text-slate-500">Organizar servicios</p>
                 </div>
               </div>
               <ChevronRight className="w-5 h-5 text-dark-300" />
