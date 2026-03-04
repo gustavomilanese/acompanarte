@@ -430,7 +430,7 @@ export function AdminDashboard() {
   const [statSeleccionada, setStatSeleccionada] = useState(null);
   const [confirmDeleteServicioStats, setConfirmDeleteServicioStats] = useState(null);
   const [altasPage, setAltasPage] = useState(0);
-  const [altasTab, setAltasTab] = useState('pendientes');
+  const [altasTab, setAltasTab] = useState('realizadas');
   const [altasExpanded, setAltasExpanded] = useState(null);
   const [editingAltaId, setEditingAltaId] = useState(null);
   const [editingAltaDraft, setEditingAltaDraft] = useState({
