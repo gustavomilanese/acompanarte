@@ -163,14 +163,21 @@ function parseExtraHoursInfo(mov) {
   if (match || genericMatch) {
     detail = detail.replace((match || genericMatch)[0], '').replace(/^[·:,\-\s]+/, '').trim();
   }
+  const fallbackDate = mov?.fecha ? new Date(mov.fecha) : null;
+  const fallbackYear = Number(mov?.year || (fallbackDate && !Number.isNaN(fallbackDate.getTime()) ? fallbackDate.getFullYear() : 0)) || 0;
+  const fallbackMonth = Number(mov?.month || (fallbackDate && !Number.isNaN(fallbackDate.getTime()) ? fallbackDate.getMonth() + 1 : 0)) || 0;
+  const fallbackServiceId = mov?.serviceId || 'sin-servicio';
+  const fallbackCaregiverId = mov?.caregiverId || 'sin-cuidador';
+  const fallbackGroupingKey = `svc:${fallbackServiceId}:${fallbackCaregiverId}:${fallbackYear}:${fallbackMonth}`;
+
   return {
     isAggregate: false,
     ref: refMatch?.[1] || null,
-    key: refMatch?.[1] ? `ref:${refMatch[1]}` : `${mov?.id || 'legacy'}:${mov?.createdAt || mov?.fecha || ''}`,
+    key: refMatch?.[1] ? `ref:${refMatch[1]}` : fallbackGroupingKey,
     caregiverId: mov?.caregiverId || null,
     caregiverNombre: mov?.caregiver?.nombre || null,
-    year: Number(mov?.year || 0) || null,
-    month: Number(mov?.month || 0) || null,
+    year: fallbackYear || null,
+    month: fallbackMonth || null,
     totalHoras: Number.isFinite(hours) ? hours : 0,
     details: [],
     lastDetail: detail ? { concepto: detail } : null,
@@ -212,6 +219,8 @@ export function Servicios() {
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [pendingDetailType, setPendingDetailType] = useState('');
   const [extraHoursExpandedKey, setExtraHoursExpandedKey] = useState('');
+  const [assignmentsOpen, setAssignmentsOpen] = useState(false);
+  const [extraHoursOpen, setExtraHoursOpen] = useState(false);
 
   const cuidadoresAsignadosEnServicio = useMemo(() => {
     if (!selectedDetail) return [];
@@ -282,6 +291,8 @@ export function Servicios() {
     setActionsMenuOpen(false);
     setPendingDetailType('');
     setExtraHoursExpandedKey('');
+    setAssignmentsOpen(false);
+    setExtraHoursOpen(false);
   }, [selectedId]);
 
   useEffect(() => {
@@ -291,6 +302,11 @@ export function Servicios() {
       return { ...prev, caregiverId: cuidadoresAsignadosEnServicio[0].id };
     });
   }, [extraHoursEditorOpen, cuidadoresAsignadosEnServicio]);
+
+  useEffect(() => {
+    if (extraHoursOpen) return;
+    setExtraHoursEditorOpen(false);
+  }, [extraHoursOpen]);
 
   const serviciosFiltrados = useMemo(() => {
     if (statusFilter === 'todos') return servicios;
@@ -302,25 +318,9 @@ export function Servicios() {
 
   const extraHoursServicio = useMemo(() => {
     if (!selectedDetail) return [];
-    const extraCobrosByKey = new Map();
-    movimientosFinanzas
+    const extraCobros = movimientosFinanzas
       .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
-      .forEach((mov) => {
-        const extraInfo = parseExtraHoursInfo(mov);
-        const pairKey = extraInfo.key;
-        if (!pairKey) return;
-        const prev = extraCobrosByKey.get(pairKey);
-        if (!prev) {
-          extraCobrosByKey.set(pairKey, { ...mov, extraInfo, pairKey });
-          return;
-        }
-        const prevDate = new Date(prev.updatedAt || prev.createdAt || prev.fecha || 0).getTime();
-        const nextDate = new Date(mov.updatedAt || mov.createdAt || mov.fecha || 0).getTime();
-        if (nextDate >= prevDate) {
-          extraCobrosByKey.set(pairKey, { ...mov, extraInfo, pairKey });
-        }
-      });
-    const extraCobros = [...extraCobrosByKey.values()];
+      .map((mov) => ({ ...mov, extraInfo: parseExtraHoursInfo(mov) }));
 
     const pagosByRef = new Map();
     movimientosFinanzas
@@ -331,16 +331,78 @@ export function Servicios() {
         if (key) pagosByRef.set(key, { ...mov, extraInfo: info });
       });
 
-    return extraCobros
+    const paired = extraCobros
       .map((cobro) => {
-        const pairedPago = pagosByRef.get(cobro.pairKey) || null;
+        const pairKey = cobro.extraInfo.key || (cobro.extraInfo.ref ? `ref:${cobro.extraInfo.ref}` : null);
+        const pairedPago = pairKey ? (pagosByRef.get(pairKey) || null) : null;
+        const fallbackDetail = (!cobro.extraInfo.details?.length && cobro.extraInfo.lastDetail?.concepto)
+          ? [{
+            id: `legacy-${cobro.id}`,
+            fecha: cobro.fecha ? new Date(cobro.fecha).toISOString().slice(0, 10) : null,
+            horas: Number.isFinite(cobro.extraInfo.totalHoras) ? Number(cobro.extraInfo.totalHoras) : null,
+            concepto: cobro.extraInfo.lastDetail.concepto,
+          }]
+          : [];
+        const details = (cobro.extraInfo.details || []).length > 0 ? cobro.extraInfo.details : fallbackDetail;
         return {
-          ref: cobro.pairKey || cobro.id,
+          ref: pairKey || cobro.id,
           cobro,
           pago: pairedPago || null,
-          info: cobro.extraInfo,
+          info: {
+            ...cobro.extraInfo,
+            details,
+            caregiverNombre: cobro.extraInfo.caregiverNombre || pairedPago?.caregiver?.nombre || pairedPago?.extraInfo?.caregiverNombre || null,
+            caregiverId: cobro.extraInfo.caregiverId || pairedPago?.caregiverId || pairedPago?.extraInfo?.caregiverId || null,
+          },
         };
-      })
+      });
+
+    const consolidatedByMonth = new Map();
+    for (const item of paired) {
+      const caregiverId = item.info.caregiverId || item.pago?.caregiver?.id || item.pago?.caregiverId || 'sin-cuidador';
+      const year = Number(item.info.year || item.cobro.year || 0) || 0;
+      const month = Number(item.info.month || item.cobro.month || 0) || 0;
+      const groupedKey = `${selectedDetail.id}:${caregiverId}:${year}:${month}`;
+      const existing = consolidatedByMonth.get(groupedKey);
+
+      if (!existing) {
+        consolidatedByMonth.set(groupedKey, {
+          ...item,
+          ref: groupedKey,
+          cobro: { ...item.cobro, monto: Number(item.cobro?.monto || 0) },
+          pago: item.pago ? { ...item.pago, monto: Number(item.pago?.monto || 0) } : null,
+          info: {
+            ...item.info,
+            year,
+            month,
+            totalHoras: Number(item.info.totalHoras || 0),
+            details: [...(item.info.details || [])],
+          },
+        });
+        continue;
+      }
+
+      existing.cobro.monto = Number(existing.cobro.monto || 0) + Number(item.cobro?.monto || 0);
+      if (existing.pago || item.pago) {
+        existing.pago = {
+          ...(existing.pago || item.pago || {}),
+          monto: Number(existing.pago?.monto || 0) + Number(item.pago?.monto || 0),
+          estado: String(existing.pago?.estado || '').toLowerCase() === 'pendiente' || String(item.pago?.estado || '').toLowerCase() === 'pendiente'
+            ? 'pendiente'
+            : (existing.pago?.estado || item.pago?.estado || 'pendiente'),
+        };
+      }
+      existing.info.totalHoras = Number(existing.info.totalHoras || 0) + Number(item.info.totalHoras || 0);
+      existing.info.details = [...(existing.info.details || []), ...(item.info.details || [])];
+      if (!existing.info.caregiverNombre && item.info.caregiverNombre) {
+        existing.info.caregiverNombre = item.info.caregiverNombre;
+      }
+      if (!existing.info.caregiverId && item.info.caregiverId) {
+        existing.info.caregiverId = item.info.caregiverId;
+      }
+    }
+
+    return [...consolidatedByMonth.values()]
       .sort((a, b) => new Date(b.cobro.fecha || b.cobro.createdAt || 0) - new Date(a.cobro.fecha || a.cobro.createdAt || 0));
   }, [selectedDetail, movimientosFinanzas]);
 
@@ -380,6 +442,15 @@ export function Servicios() {
     () => movimientosServicioPendientes.pagos.reduce((acc, mov) => acc + Number(mov.monto || 0), 0),
     [movimientosServicioPendientes]
   );
+
+  const extraHoursQuickStats = useMemo(() => {
+    return extraHoursServicio.reduce((acc, item) => ({
+      horas: acc.horas + Number(item.info.totalHoras || 0),
+      cobro: acc.cobro + Number(item.cobro?.monto || 0),
+      pago: acc.pago + Number(item.pago?.monto || 0),
+      rows: acc.rows + 1,
+    }), { horas: 0, cobro: 0, pago: 0, rows: 0 });
+  }, [extraHoursServicio]);
 
   const refreshAll = async () => {
     await loadData();
@@ -663,8 +734,11 @@ export function Servicios() {
                         <h2 className="text-lg font-semibold text-slate-800">{selectedDetail.paciente?.nombre || 'Paciente'}</h2>
                         <span className={`text-xs px-2 py-1 rounded-full border ${badgeByStatus(selectedDetail.estado)}`}>{prettyStatus(selectedDetail.estado)}</span>
                       </div>
-                      <p className="text-sm text-slate-600">Inicio: {format(new Date(selectedDetail.fechaInicio), 'dd/MM/yyyy HH:mm')}</p>
-                      <p className="text-sm text-slate-600">Dirección: {selectedDetail.direccion || selectedDetail.paciente?.direccion || 'Sin dirección'}</p>
+                      <p className="text-sm text-slate-600">
+                        {format(new Date(selectedDetail.fechaInicio), 'dd/MM/yyyy HH:mm')}
+                        {' · '}
+                        {selectedDetail.direccion || selectedDetail.paciente?.direccion || 'Sin dirección'}
+                      </p>
                     </div>
                     <div className="relative">
                       <button
@@ -757,62 +831,118 @@ export function Servicios() {
                   <div className="grid grid-cols-1 gap-6">
                     <section>
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-semibold text-slate-700">Cuidadores asignados</p>
                         <button
                           type="button"
-                          onClick={() => {
-                            resetAssignmentForm();
-                            setAssignmentModalOpen(true);
-                          }}
-                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                          title="Agregar asignación"
-                          aria-label="Agregar asignación"
+                          onClick={() => setAssignmentsOpen((prev) => !prev)}
+                          className="text-sm font-semibold text-slate-700 hover:text-slate-900"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          Cuidadores asignados
                         </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetAssignmentForm();
+                              setAssignmentModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                            title="Agregar asignación"
+                            aria-label="Agregar asignación"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAssignmentsOpen((prev) => !prev)}
+                            className="inline-flex items-center justify-center h-7 min-w-7 px-2 text-xs rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          >
+                            {assignmentsOpen ? '-' : '+'}
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-xs text-slate-500 mb-3">Gestioná asignaciones activas del servicio.</p>
-                      <div className="space-y-2 mb-3">
-                        {(selectedDetail.assignments || []).length === 0 && <p className="text-xs text-slate-500">Sin asignaciones.</p>}
-                        {(selectedDetail.assignments || []).map((a) => (
-                          <div key={a.id} className="flex items-center justify-between rounded-lg border border-indigo-100 bg-white px-3 py-2">
-                            <div>
-                              <p className="text-sm text-slate-700">
-                                {a.tipo === 'caregiver' ? (a.caregiver?.nombre || 'Cuidador') : (a.nombreManual || 'Profesional')}
-                              </p>
-                            </div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              className={a.activo ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-emerald-200 bg-emerald-50 text-emerald-700'}
-                              onClick={() => toggleAssignment(a)}
-                            >
-                              {a.activo ? 'Desactivar' : 'Activar'}
-                            </Button>
+                      {!assignmentsOpen ? (
+                        <p className="text-xs text-slate-500 mb-3">
+                          {(selectedDetail.assignments || []).filter((a) => a.activo).length} asignaciones activas.
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-slate-500 mb-3">Gestioná asignaciones activas del servicio.</p>
+                          <div className="space-y-2 mb-3">
+                            {(selectedDetail.assignments || []).length === 0 && <p className="text-xs text-slate-500">Sin asignaciones.</p>}
+                            {(selectedDetail.assignments || []).map((a) => (
+                              <div key={a.id} className="flex items-center justify-between rounded-lg border border-indigo-100 bg-white px-3 py-2">
+                                <div>
+                                  <p className="text-sm text-slate-700">
+                                    {a.tipo === 'caregiver' ? (a.caregiver?.nombre || 'Cuidador') : (a.nombreManual || 'Profesional')}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className={a.activo ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-emerald-200 bg-emerald-50 text-emerald-700'}
+                                  onClick={() => toggleAssignment(a)}
+                                >
+                                  {a.activo ? 'Desactivar' : 'Activar'}
+                                </Button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        </>
+                      )}
                     </section>
 
                     <section className="border-t border-slate-200 pt-5">
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-semibold text-slate-700">Horas extra por facturar</p>
-                        {selectedDetail.estado !== 'cancelado' && selectedDetail.estado !== 'completado' ? (
+                        <button
+                          type="button"
+                          onClick={() => setExtraHoursOpen((prev) => !prev)}
+                          className="text-sm font-semibold text-slate-700 hover:text-slate-900"
+                        >
+                          Horas extra por facturar
+                        </button>
+                        <div className="flex items-center gap-2">
+                          {extraHoursOpen && selectedDetail.estado !== 'cancelado' && selectedDetail.estado !== 'completado' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExtraHoursEditorOpen((prev) => !prev);
+                                if (extraHoursEditorOpen) resetExtraHoursForm();
+                              }}
+                              className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                              title={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
+                              aria-label={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          ) : null}
                           <button
                             type="button"
-                            onClick={() => {
-                              setExtraHoursEditorOpen((prev) => !prev);
-                              if (extraHoursEditorOpen) resetExtraHoursForm();
-                            }}
-                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                            title={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
-                            aria-label={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
+                            onClick={() => setExtraHoursOpen((prev) => !prev)}
+                            className="inline-flex items-center justify-center h-7 min-w-7 px-2 text-xs rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                           >
-                            <Plus className="w-3.5 h-3.5" />
+                            {extraHoursOpen ? '-' : '+'}
                           </button>
-                        ) : null}
+                        </div>
                       </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+                        <div className="px-3 py-2 rounded-lg border border-amber-100 bg-amber-50/70">
+                          <p className="text-[11px] text-slate-500">Acumulado de horas</p>
+                          <p className="text-sm font-semibold text-amber-700">{Number(extraHoursQuickStats.horas || 0).toLocaleString('es-AR')} hs</p>
+                        </div>
+                        <div className="px-3 py-2 rounded-lg border border-emerald-100 bg-emerald-50/70">
+                          <p className="text-[11px] text-slate-500">Pendiente de cobro (horas extra)</p>
+                          <p className="text-sm font-semibold text-emerald-700">${Number(extraHoursQuickStats.cobro || 0).toLocaleString('es-AR')}</p>
+                        </div>
+                        <div className="px-3 py-2 rounded-lg border border-violet-100 bg-violet-50/70">
+                          <p className="text-[11px] text-slate-500">Pendiente de pago (horas extra)</p>
+                          <p className="text-sm font-semibold text-violet-700">${Number(extraHoursQuickStats.pago || 0).toLocaleString('es-AR')}</p>
+                        </div>
+                      </div>
+
+                      {extraHoursOpen && (
+                        <>
                       <p className="text-xs text-slate-500 mb-3">Se acumula por cuidador y mes. El total se calcula como horas x valor hora (cobro) y horas x costo hora (pago).</p>
 
                       {extraHoursEditorOpen && (
@@ -994,6 +1124,8 @@ export function Servicios() {
                           </tbody>
                         </table>
                       </div>
+                        </>
+                      )}
                     </section>
 
                     <section className="border-t border-slate-200 pt-5">
@@ -1008,7 +1140,7 @@ export function Servicios() {
                         </button>
                       </div>
 
-                      <div className="space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="rounded-xl border border-amber-100 bg-white p-3">
                           <div className="flex items-center justify-between gap-2">
                             <div>

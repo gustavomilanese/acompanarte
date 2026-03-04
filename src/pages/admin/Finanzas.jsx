@@ -162,6 +162,15 @@ const parseExtraHoursAggregateNotes = (notes) => {
   }
 };
 
+const getExtraHoursGroupKey = (movement) => {
+  const aggregate = parseExtraHoursAggregateNotes(movement?.notas);
+  const serviceId = movement?.serviceId || aggregate?.serviceId || 'sin-servicio';
+  const caregiverId = movement?.caregiverId || aggregate?.caregiverId || 'sin-cuidador';
+  const year = Number(movement?.year || aggregate?.year || 0) || 0;
+  const month = Number(movement?.month || aggregate?.month || 0) || 0;
+  return `${movement?.tipo || 'mov'}:${serviceId}:${caregiverId}:${year}:${month}`;
+};
+
 export function Finanzas() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -460,8 +469,8 @@ export function Finanzas() {
     }
   };
 
-  const movimientosFiltrados = useMemo(
-    () => movimientosTotales
+  const movimientosFiltrados = useMemo(() => {
+    const filtered = movimientosTotales
       .filter((m) => m.tipo === TAB_META[tab].tipo)
       .filter((m) => Number(m.year) === Number(selectedYear))
       .filter((m) => {
@@ -474,9 +483,62 @@ export function Finanzas() {
         const aDate = new Date(a.fechaPago || a.fecha || 0).getTime();
         const bDate = new Date(b.fechaPago || b.fecha || 0).getTime();
         return bDate - aDate;
-      }),
-    [movimientosTotales, tab, estadoFiltro, selectedYear]
-  );
+      });
+
+    if (![TAB_COBROS, TAB_PAGOS].includes(tab)) {
+      return filtered.map((item) => ({ ...item, groupIds: [item.id] }));
+    }
+
+    const grouped = new Map();
+    for (const movement of filtered) {
+      if (movement.categoria !== EXTRA_HOURS_CATEGORY) {
+        grouped.set(`mov:${movement.id}`, { ...movement, groupIds: [movement.id] });
+        continue;
+      }
+
+      const key = getExtraHoursGroupKey(movement);
+      const existing = grouped.get(key);
+      if (!existing) {
+        grouped.set(key, {
+          ...movement,
+          monto: Number(movement.monto || 0),
+          groupIds: [movement.id],
+        });
+        continue;
+      }
+
+      const movementDate = new Date(movement.fecha || movement.createdAt || 0).getTime();
+      const existingDate = new Date(existing.fecha || existing.createdAt || 0).getTime();
+
+      existing.groupIds.push(movement.id);
+      existing.monto = Number(existing.monto || 0) + Number(movement.monto || 0);
+      if (movementDate > existingDate) {
+        existing.fecha = movement.fecha;
+        existing.createdAt = movement.createdAt;
+      }
+
+      const currentPending = String(existing.estado || '').toLowerCase() === 'pendiente';
+      const nextPending = String(movement.estado || '').toLowerCase() === 'pendiente';
+      existing.estado = (currentPending || nextPending) ? 'pendiente' : (existing.estado || movement.estado);
+
+      const existingAggregate = parseExtraHoursAggregateNotes(existing.notas);
+      const movementAggregate = parseExtraHoursAggregateNotes(movement.notas);
+      const existingDetails = existingAggregate?.detalles?.length || 0;
+      const movementDetails = movementAggregate?.detalles?.length || 0;
+      if (movementDetails > existingDetails) {
+        existing.notas = movement.notas;
+      }
+
+      if (!existing.caregiverId && movement.caregiverId) existing.caregiverId = movement.caregiverId;
+      if (!existing.caregiver?.id && movement.caregiver?.id) existing.caregiver = movement.caregiver;
+    }
+
+    return [...grouped.values()].sort((a, b) => {
+      const aDate = new Date(a.fechaPago || a.fecha || 0).getTime();
+      const bDate = new Date(b.fechaPago || b.fecha || 0).getTime();
+      return bDate - aDate;
+    });
+  }, [movimientosTotales, tab, estadoFiltro, selectedYear]);
 
   const calcularAcumulado = (tipo, desde, hasta) => {
     const [fromY, fromM] = String(desde || '').split('-').map(Number);
@@ -610,9 +672,14 @@ export function Finanzas() {
     return null;
   };
 
-  const handleDeleteMovimiento = async (movimientoId) => {
+  const handleDeleteMovimiento = async (movimiento) => {
+    const movementIds = Array.isArray(movimiento?.groupIds) && movimiento.groupIds.length > 0
+      ? movimiento.groupIds
+      : [movimiento?.id].filter(Boolean);
+    if (movementIds.length === 0) return;
+
     try {
-      await adminApi.deleteFinanzasMovimiento(movimientoId);
+      await Promise.all(movementIds.map((id) => adminApi.deleteFinanzasMovimiento(id)));
       showSuccess('Registro eliminado');
       await loadData();
     } catch (error) {
@@ -621,13 +688,20 @@ export function Finanzas() {
   };
 
   const handleToggleEstadoRapido = async (movimiento) => {
+    const movementIds = Array.isArray(movimiento?.groupIds) && movimiento.groupIds.length > 0
+      ? movimiento.groupIds
+      : [movimiento?.id].filter(Boolean);
+    if (movementIds.length === 0) return;
+
     const isPendiente = String(movimiento.estado || '').toLowerCase() === 'pendiente';
     const estadoObjetivo = isPendiente ? getCompletedEstado(movimiento.tipo) : 'pendiente';
     try {
-      await adminApi.updateFinanzasMovimiento(movimiento.id, {
-        estado: estadoObjetivo,
-        fechaPago: estadoObjetivo === 'pendiente' ? null : new Date().toISOString().slice(0, 10),
-      });
+      await Promise.all(
+        movementIds.map((id) => adminApi.updateFinanzasMovimiento(id, {
+          estado: estadoObjetivo,
+          fechaPago: estadoObjetivo === 'pendiente' ? null : new Date().toISOString().slice(0, 10),
+        }))
+      );
       showSuccess(`Estado actualizado: ${estadoObjetivo}`);
       await loadData();
     } catch (error) {
@@ -985,7 +1059,7 @@ export function Finanzas() {
                         )}
                         <button
                           type="button"
-                          onClick={() => handleDeleteMovimiento(m.id)}
+                          onClick={() => handleDeleteMovimiento(m)}
                           className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
