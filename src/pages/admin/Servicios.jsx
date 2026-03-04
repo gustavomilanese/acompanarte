@@ -1206,8 +1206,6 @@ export function Servicios() {
 
                       {extraHoursOpen && (
                         <>
-                      <p className="text-xs text-slate-500 mb-3">Se acumula por cuidador y mes. El total se calcula como horas x valor hora (cobro) y horas x costo hora (pago).</p>
-
                       {extraHoursEditorOpen && (
                         <form onSubmit={submitExtraHours} className="rounded-xl border border-amber-100 bg-white p-3 mb-3 space-y-2">
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
@@ -1300,8 +1298,7 @@ export function Servicios() {
                         </form>
                       )}
 
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs text-slate-500">Registros cargados (uno por uno).</p>
+                      <div className="flex items-center justify-end mb-2">
                         <button
                           type="button"
                           onClick={() => navigate('/admin/finanzas?tab=cobros&estado=pendiente')}

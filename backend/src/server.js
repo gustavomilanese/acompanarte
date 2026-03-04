@@ -581,6 +581,9 @@ const CAREGIVER_SIGNUP_ALLOWED_CV_MIME = new Set([
 const MIN_CV_ARCHIVO_SUPPORTED_CHARS = 11_000_000
 let caregiverCvColumnEnsurePromise = null
 let caregiverCvColumnEnsured = false
+const MIN_FINANCE_NOTAS_SUPPORTED_CHARS = 200_000
+let financeNotasColumnEnsurePromise = null
+let financeNotasColumnEnsured = false
 
 async function ensureCaregiverCvArchivoColumnCapacity({ force = false } = {}) {
   if (!force && caregiverCvColumnEnsured) return
@@ -623,6 +626,49 @@ async function ensureCaregiverCvArchivoColumnCapacity({ force = false } = {}) {
     })
 
   await caregiverCvColumnEnsurePromise
+}
+
+async function ensureFinanceMovementNotasColumnCapacity({ force = false } = {}) {
+  if (!force && financeNotasColumnEnsured) return
+  if (financeNotasColumnEnsurePromise) {
+    await financeNotasColumnEnsurePromise
+    return
+  }
+
+  financeNotasColumnEnsurePromise = (async () => {
+    const rows = await prisma.$queryRaw`
+      SELECT DATA_TYPE AS dataType, CHARACTER_MAXIMUM_LENGTH AS maxLen
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'FinanceMovement'
+        AND COLUMN_NAME = 'notas'
+      LIMIT 1
+    `
+
+    const column = Array.isArray(rows) ? rows[0] : null
+    if (!column) {
+      financeNotasColumnEnsured = true
+      return
+    }
+
+    const dataType = String(column.dataType || '').toLowerCase()
+    const maxLenRaw = column.maxLen === null || column.maxLen === undefined ? null : Number(column.maxLen)
+    const maxLen = Number.isFinite(maxLenRaw) ? maxLenRaw : null
+    const alreadyLargeText = ['longtext', 'mediumtext', 'text'].includes(dataType)
+    const alreadyEnoughVarchar = maxLen !== null && maxLen >= MIN_FINANCE_NOTAS_SUPPORTED_CHARS
+
+    if (!alreadyLargeText && !alreadyEnoughVarchar) {
+      await prisma.$executeRawUnsafe('ALTER TABLE `FinanceMovement` MODIFY COLUMN `notas` LONGTEXT NULL')
+      console.log('[startup] migrated FinanceMovement.notas to LONGTEXT')
+    }
+
+    financeNotasColumnEnsured = true
+  })()
+    .finally(() => {
+      financeNotasColumnEnsurePromise = null
+    })
+
+  await financeNotasColumnEnsurePromise
 }
 
 function enforceCaregiverSignupRateLimit(req) {
@@ -2151,6 +2197,7 @@ app.post('/api/admin/servicios-modulo/:id/payments', asyncHandler(async (req, re
 }))
 
 app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req, res) => {
+  await ensureFinanceMovementNotasColumnCapacity()
   requireFields(req.body, ['caregiverId', 'fecha', 'horas'])
 
   const horas = Number(req.body.horas)
@@ -2457,6 +2504,7 @@ app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req,
 }))
 
 app.put('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(async (req, res) => {
+  await ensureFinanceMovementNotasColumnCapacity()
   requireFields(req.body, ['caregiverId', 'fecha', 'horas'])
 
   const entryId = String(req.params.entryId || '').trim()
@@ -2713,6 +2761,7 @@ app.put('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(asy
 }))
 
 app.delete('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(async (req, res) => {
+  await ensureFinanceMovementNotasColumnCapacity()
   const entryId = String(req.params.entryId || '').trim()
   if (!entryId) {
     const error = new Error('Registro de hora extra inválido.')
@@ -2887,6 +2936,7 @@ app.put('/api/admin/servicios-modulo/:id/assignments/:assignmentId', asyncHandle
 }))
 
 app.get('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
+  await ensureFinanceMovementNotasColumnCapacity()
   await normalizeExtraHoursDuplicates()
 
   const tipo = req.query?.tipo
@@ -3224,6 +3274,11 @@ async function start() {
         await ensureCaregiverCvArchivoColumnCapacity()
       } catch (schemaError) {
         console.error(`[startup] caregiver cv column check failed: ${schemaError.message}`)
+      }
+      try {
+        await ensureFinanceMovementNotasColumnCapacity()
+      } catch (schemaError) {
+        console.error(`[startup] finance notas column check failed: ${schemaError.message}`)
       }
     } catch (error) {
       dbHealth.connected = false
