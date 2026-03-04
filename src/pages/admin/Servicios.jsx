@@ -752,14 +752,23 @@ export function Servicios() {
   };
 
   const startExtraHoursEdit = (row) => {
+    const fallbackCaregiverId = row.caregiverId || cuidadoresAsignadosEnServicio[0]?.id || '';
+    const rowHours = Number(row.horas || 0);
+    const fallbackCobroRate = row.valorHoraCobro !== null && row.valorHoraCobro !== undefined
+      ? Number(row.valorHoraCobro)
+      : (rowHours > 0 ? Number(row.montoCobro || 0) / rowHours : Number(row.precio || 0));
+    const fallbackPagoRate = row.valorHoraPago !== null && row.valorHoraPago !== undefined
+      ? Number(row.valorHoraPago)
+      : (rowHours > 0 ? Number(row.montoPago || 0) / rowHours : Number(row.precio || 0));
+
     setExtraHoursEditingId(row.id);
     setExtraHoursEditorOpen(true);
     setExtraHoursForm({
       fecha: row.fecha || new Date().toISOString().slice(0, 10),
-      caregiverId: row.caregiverId || '',
+      caregiverId: fallbackCaregiverId,
       horas: row.horas ? String(row.horas) : '',
-      valorHoraCobro: row.valorHoraCobro !== null && row.valorHoraCobro !== undefined ? String(row.valorHoraCobro) : '',
-      valorHoraPago: row.valorHoraPago !== null && row.valorHoraPago !== undefined ? String(row.valorHoraPago) : '',
+      valorHoraCobro: Number.isFinite(fallbackCobroRate) ? String(roundMoney(fallbackCobroRate)) : '0',
+      valorHoraPago: Number.isFinite(fallbackPagoRate) ? String(roundMoney(fallbackPagoRate)) : '0',
       notas: row.concepto || '',
     });
   };
