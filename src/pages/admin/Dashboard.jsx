@@ -431,7 +431,7 @@ export function AdminDashboard() {
   const [confirmDeleteServicioStats, setConfirmDeleteServicioStats] = useState(null);
   const [altasPage, setAltasPage] = useState(0);
   const [altasTab, setAltasTab] = useState('realizadas');
-  const [altasExpanded, setAltasExpanded] = useState(null);
+  const [altasExpanded, setAltasExpanded] = useState(true);
   const [editingAltaId, setEditingAltaId] = useState(null);
   const [editingAltaDraft, setEditingAltaDraft] = useState({
     fecha: '',
@@ -681,7 +681,7 @@ export function AdminDashboard() {
   }, [altasTab]);
 
   const cuidadoresActivos = acompanantes.filter((a) => a.estado === 'activo').length;
-  const resolvedAltasExpanded = altasExpanded ?? (altasPendientes.length > 0);
+  const resolvedAltasExpanded = altasExpanded ?? (altasTab === 'realizadas' || altasPendientes.length > 0);
   const dashboardFinanceRangeEnd = useMemo(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
