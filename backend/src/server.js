@@ -663,6 +663,214 @@ function normalizeExtraHoursDetail(detail, fallbackId = null) {
   }
 }
 
+function getExtraHoursDetailKey(detail) {
+  if (!detail || typeof detail !== 'object') return ''
+  const fecha = String(detail.fecha || '')
+  const horas = Number.isFinite(Number(detail.horas)) ? Number(detail.horas) : ''
+  const valorHoraCobro = Number.isFinite(Number(detail.valorHoraCobro)) ? roundCurrency(detail.valorHoraCobro) : ''
+  const valorHoraPago = Number.isFinite(Number(detail.valorHoraPago)) ? roundCurrency(detail.valorHoraPago) : ''
+  const montoCobro = Number.isFinite(Number(detail.montoCobro)) ? roundCurrency(detail.montoCobro) : ''
+  const montoPago = Number.isFinite(Number(detail.montoPago)) ? roundCurrency(detail.montoPago) : ''
+  const concepto = String(detail.concepto || '').trim().toLowerCase()
+  const createdAt = detail.createdAt ? String(detail.createdAt) : ''
+  if (createdAt) {
+    return `sig:${fecha}|${horas}|${valorHoraCobro}|${valorHoraPago}|${montoCobro}|${montoPago}|${concepto}|${createdAt}`
+  }
+  if (detail.id) {
+    return `id:${String(detail.id)}|${fecha}|${horas}|${montoCobro}|${montoPago}|${concepto}`
+  }
+  return `sig:${fecha}|${horas}|${valorHoraCobro}|${valorHoraPago}|${montoCobro}|${montoPago}|${concepto}`
+}
+
+let extraHoursNormalizationPromise = null
+let extraHoursLastNormalizedAt = 0
+const EXTRA_HOURS_NORMALIZE_INTERVAL_MS = 45 * 1000
+
+async function normalizeExtraHoursDuplicates({ force = false } = {}) {
+  const nowTs = Date.now()
+  if (!force && nowTs - extraHoursLastNormalizedAt < EXTRA_HOURS_NORMALIZE_INTERVAL_MS) return
+  if (extraHoursNormalizationPromise) {
+    await extraHoursNormalizationPromise
+    return
+  }
+
+  extraHoursNormalizationPromise = prisma.$transaction(async (tx) => {
+    const movements = await tx.financeMovement.findMany({
+      where: {
+        categoria: 'horas_extra',
+        periodType: 'month',
+        tipo: { in: ['cobro', 'pago'] },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    })
+
+    const scopedGroups = new Map()
+
+    for (const movement of movements) {
+      const aggregate = parseExtraHoursAggregateNotes(movement.notas || '')
+      const inferredCaregiverId = movement.caregiverId || aggregate?.caregiverId || null
+      const inferredYear = Number(movement.year || aggregate?.year || 0) || 0
+      const inferredMonth = Number(movement.month || aggregate?.month || 0) || 0
+      const scopeKey = [
+        movement.tipo || 'tipo',
+        movement.serviceId || 'service',
+        inferredYear,
+        inferredMonth,
+      ].join(':')
+
+      if (!scopedGroups.has(scopeKey)) {
+        scopedGroups.set(scopeKey, { known: new Map(), unknown: [] })
+      }
+
+      const scope = scopedGroups.get(scopeKey)
+      const entry = { movement, aggregate, caregiverId: inferredCaregiverId, year: inferredYear, month: inferredMonth }
+      if (inferredCaregiverId) {
+        if (!scope.known.has(inferredCaregiverId)) scope.known.set(inferredCaregiverId, [])
+        scope.known.get(inferredCaregiverId).push(entry)
+      } else {
+        scope.unknown.push(entry)
+      }
+    }
+
+    const pickCanonicalEntry = (entries = []) => {
+      if (!Array.isArray(entries) || entries.length === 0) return null
+      return [...entries].sort((a, b) => {
+        const detailsA = Array.isArray(a.aggregate?.detalles) ? a.aggregate.detalles.length : 0
+        const detailsB = Array.isArray(b.aggregate?.detalles) ? b.aggregate.detalles.length : 0
+        if (detailsA !== detailsB) return detailsB - detailsA
+
+        const pendingA = String(a.movement?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0
+        const pendingB = String(b.movement?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0
+        if (pendingA !== pendingB) return pendingB - pendingA
+
+        const tsA = new Date(a.movement?.updatedAt || a.movement?.createdAt || a.movement?.fecha || 0).getTime() || 0
+        const tsB = new Date(b.movement?.updatedAt || b.movement?.createdAt || b.movement?.fecha || 0).getTime() || 0
+        return tsB - tsA
+      })[0]
+    }
+
+    for (const scope of scopedGroups.values()) {
+      const caregiverGroups = new Map(scope.known)
+
+      if (scope.unknown.length > 0) {
+        if (caregiverGroups.size === 1) {
+          const [singleCaregiverId] = caregiverGroups.keys()
+          caregiverGroups.get(singleCaregiverId).push(...scope.unknown)
+        } else {
+          const unknownKey = 'sin-cuidador'
+          if (!caregiverGroups.has(unknownKey)) caregiverGroups.set(unknownKey, [])
+          caregiverGroups.get(unknownKey).push(...scope.unknown)
+        }
+      }
+
+      for (const [caregiverKey, groupEntries] of caregiverGroups.entries()) {
+        if (!Array.isArray(groupEntries) || groupEntries.length === 0) continue
+
+        const canonicalEntry = pickCanonicalEntry(groupEntries)
+        if (!canonicalEntry) continue
+
+        const effectiveCaregiverId = caregiverKey !== 'sin-cuidador'
+          ? caregiverKey
+          : (canonicalEntry.caregiverId || null)
+
+        const detailsByKey = new Map()
+        for (const entry of groupEntries) {
+          const aggregateDetails = Array.isArray(entry.aggregate?.detalles) ? entry.aggregate.detalles : []
+
+          if (aggregateDetails.length > 0) {
+            for (const rawDetail of aggregateDetails) {
+              const normalized = normalizeExtraHoursDetail(rawDetail, null)
+              if (!normalized) continue
+              const detailKey = getExtraHoursDetailKey(normalized)
+              if (!detailKey) continue
+              if (!detailsByKey.has(detailKey)) detailsByKey.set(detailKey, normalized)
+            }
+            continue
+          }
+
+          const item = entry.movement
+          const fallbackDate = item.fecha instanceof Date && !Number.isNaN(item.fecha.getTime())
+            ? item.fecha.toISOString().slice(0, 10)
+            : null
+          const legacyDetail = normalizeExtraHoursDetail({
+            id: null,
+            fecha: fallbackDate,
+            horas: null,
+            valorHoraCobro: null,
+            valorHoraPago: null,
+            montoCobro: item.tipo === 'cobro' ? Number(item.monto || 0) : 0,
+            montoPago: item.tipo === 'pago' ? Number(item.monto || 0) : 0,
+            concepto: String(item.notas || '').trim() || 'Registro legacy',
+            legacy: true,
+          }, null)
+          if (!legacyDetail) continue
+          const legacyKey = [
+            'legacy',
+            fallbackDate || '',
+            roundCurrency(item.monto || 0),
+            String(item.notas || '').trim().toLowerCase(),
+          ].join('|')
+          if (!detailsByKey.has(legacyKey)) detailsByKey.set(legacyKey, legacyDetail)
+        }
+
+        const details = [...detailsByKey.values()]
+        const totals = details.reduce((acc, detail) => ({
+          horas: acc.horas + (Number.isFinite(detail.horas) ? Number(detail.horas) : 0),
+          montoCobro: acc.montoCobro + roundCurrency(detail.montoCobro || 0),
+          montoPago: acc.montoPago + roundCurrency(detail.montoPago || 0),
+        }), { horas: 0, montoCobro: 0, montoPago: 0 })
+
+        totals.horas = roundCurrency(totals.horas)
+        totals.montoCobro = roundCurrency(totals.montoCobro)
+        totals.montoPago = roundCurrency(totals.montoPago)
+
+        const canonical = canonicalEntry.movement
+        const aggregatePayload = {
+          version: 1,
+          kind: 'extra_hours_aggregate',
+          serviceId: canonical.serviceId || null,
+          patientId: canonical.patientId || null,
+          patientNombre: null,
+          caregiverId: effectiveCaregiverId,
+          caregiverNombre: canonicalEntry.aggregate?.caregiverNombre || null,
+          year: canonicalEntry.year || canonical.year || null,
+          month: canonicalEntry.month || canonical.month || null,
+          detalles: details,
+          totals,
+        }
+        const aggregateNotes = buildExtraHoursAggregateNotes(aggregatePayload)
+        const groupHasPending = groupEntries.some((entry) => String(entry.movement.estado || '').toLowerCase() === 'pendiente')
+
+        await tx.financeMovement.update({
+          where: { id: canonical.id },
+          data: {
+            caregiverId: effectiveCaregiverId,
+            monto: canonical.tipo === 'cobro' ? totals.montoCobro : totals.montoPago,
+            notas: aggregateNotes,
+            estado: groupHasPending ? 'pendiente' : (canonical.estado || 'pagado'),
+          },
+        })
+
+        const deleteIds = groupEntries
+          .map((entry) => entry.movement.id)
+          .filter((id) => id !== canonical.id)
+
+        if (deleteIds.length > 0) {
+          await tx.financeMovement.deleteMany({
+            where: { id: { in: deleteIds } },
+          })
+        }
+      }
+    }
+  })
+    .finally(() => {
+      extraHoursLastNormalizedAt = Date.now()
+      extraHoursNormalizationPromise = null
+    })
+
+  await extraHoursNormalizationPromise
+}
+
 function parseJsonSafe(text, fallback = {}) {
   try {
     return JSON.parse(text)
@@ -1879,6 +2087,24 @@ app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req,
         },
       })
 
+    const duplicateCobroIds = existingCobros
+      .map((item) => item.id)
+      .filter((id) => id !== cobro.id)
+    if (duplicateCobroIds.length > 0) {
+      await tx.financeMovement.deleteMany({
+        where: { id: { in: duplicateCobroIds } },
+      })
+    }
+
+    const duplicatePagoIds = existingPagos
+      .map((item) => item.id)
+      .filter((id) => id !== pago.id)
+    if (duplicatePagoIds.length > 0) {
+      await tx.financeMovement.deleteMany({
+        where: { id: { in: duplicatePagoIds } },
+      })
+    }
+
     await tx.serviceEvent.create({
       data: {
         serviceId: service.id,
@@ -1961,6 +2187,8 @@ app.put('/api/admin/servicios-modulo/:id/assignments/:assignmentId', asyncHandle
 }))
 
 app.get('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
+  await normalizeExtraHoursDuplicates()
+
   const tipo = req.query?.tipo
   const periodType = req.query?.periodType
   const year = req.query?.year ? Number(req.query.year) : null
@@ -2152,6 +2380,8 @@ app.delete('/api/admin/finanzas/movimientos/:id', asyncHandler(async (req, res) 
 }))
 
 app.get('/api/admin/finanzas/resumen', asyncHandler(async (_req, res) => {
+  await normalizeExtraHoursDuplicates()
+
   const now = new Date()
   const year = now.getFullYear()
   const month = now.getMonth() + 1

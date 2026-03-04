@@ -489,51 +489,70 @@ export function Finanzas() {
       return filtered.map((item) => ({ ...item, groupIds: [item.id] }));
     }
 
-    const grouped = new Map();
+    const directItems = [];
+    const extraBuckets = new Map();
+
     for (const movement of filtered) {
       if (movement.categoria !== EXTRA_HOURS_CATEGORY) {
-        grouped.set(`mov:${movement.id}`, { ...movement, groupIds: [movement.id] });
+        directItems.push({ ...movement, groupIds: [movement.id] });
         continue;
       }
-
       const key = getExtraHoursGroupKey(movement);
-      const existing = grouped.get(key);
-      if (!existing) {
-        grouped.set(key, {
-          ...movement,
-          monto: Number(movement.monto || 0),
-          groupIds: [movement.id],
-        });
-        continue;
-      }
-
-      const movementDate = new Date(movement.fecha || movement.createdAt || 0).getTime();
-      const existingDate = new Date(existing.fecha || existing.createdAt || 0).getTime();
-
-      existing.groupIds.push(movement.id);
-      existing.monto = Number(existing.monto || 0) + Number(movement.monto || 0);
-      if (movementDate > existingDate) {
-        existing.fecha = movement.fecha;
-        existing.createdAt = movement.createdAt;
-      }
-
-      const currentPending = String(existing.estado || '').toLowerCase() === 'pendiente';
-      const nextPending = String(movement.estado || '').toLowerCase() === 'pendiente';
-      existing.estado = (currentPending || nextPending) ? 'pendiente' : (existing.estado || movement.estado);
-
-      const existingAggregate = parseExtraHoursAggregateNotes(existing.notas);
-      const movementAggregate = parseExtraHoursAggregateNotes(movement.notas);
-      const existingDetails = existingAggregate?.detalles?.length || 0;
-      const movementDetails = movementAggregate?.detalles?.length || 0;
-      if (movementDetails > existingDetails) {
-        existing.notas = movement.notas;
-      }
-
-      if (!existing.caregiverId && movement.caregiverId) existing.caregiverId = movement.caregiverId;
-      if (!existing.caregiver?.id && movement.caregiver?.id) existing.caregiver = movement.caregiver;
+      if (!extraBuckets.has(key)) extraBuckets.set(key, []);
+      extraBuckets.get(key).push(movement);
     }
 
-    return [...grouped.values()].sort((a, b) => {
+    const getMovementTimestamp = (movement) => new Date(
+      movement?.updatedAt || movement?.createdAt || movement?.fecha || 0
+    ).getTime() || 0;
+
+    const pickCanonicalMovement = (items) => {
+      if (!Array.isArray(items) || items.length === 0) return null;
+      return [...items].sort((a, b) => {
+        const detailsA = parseExtraHoursAggregateNotes(a?.notas)?.detalles?.length || 0;
+        const detailsB = parseExtraHoursAggregateNotes(b?.notas)?.detalles?.length || 0;
+        if (detailsA !== detailsB) return detailsB - detailsA;
+
+        const pendingA = String(a?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0;
+        const pendingB = String(b?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0;
+        if (pendingA !== pendingB) return pendingB - pendingA;
+
+        return getMovementTimestamp(b) - getMovementTimestamp(a);
+      })[0];
+    };
+
+    const extraItems = [...extraBuckets.values()].map((items) => {
+      const canonical = pickCanonicalMovement(items);
+      if (!canonical) return null;
+
+      const withAggregate = items
+        .map((movement) => ({ movement, aggregate: parseExtraHoursAggregateNotes(movement?.notas) }))
+        .sort((a, b) => {
+          const detailsA = a.aggregate?.detalles?.length || 0;
+          const detailsB = b.aggregate?.detalles?.length || 0;
+          if (detailsA !== detailsB) return detailsB - detailsA;
+          return getMovementTimestamp(b.movement) - getMovementTimestamp(a.movement);
+        });
+
+      const bestAggregate = withAggregate[0]?.aggregate || null;
+      const amountFromAggregate = tab === TAB_COBROS
+        ? Number(bestAggregate?.totals?.montoCobro || 0)
+        : Number(bestAggregate?.totals?.montoPago || 0);
+      const anyPending = items.some((item) => String(item.estado || '').toLowerCase() === 'pendiente');
+      const fallbackCaregiver = items.find((item) => item?.caregiver?.id || item?.caregiverId);
+
+      return {
+        ...canonical,
+        monto: amountFromAggregate > 0 ? amountFromAggregate : Number(canonical.monto || 0),
+        estado: anyPending ? 'pendiente' : (canonical.estado || 'pagado'),
+        notas: withAggregate[0]?.movement?.notas || canonical.notas,
+        caregiverId: canonical.caregiverId || fallbackCaregiver?.caregiverId || null,
+        caregiver: canonical.caregiver?.id ? canonical.caregiver : (fallbackCaregiver?.caregiver || canonical.caregiver),
+        groupIds: items.map((item) => item.id),
+      };
+    }).filter(Boolean);
+
+    return [...directItems, ...extraItems].sort((a, b) => {
       const aDate = new Date(a.fechaPago || a.fecha || 0).getTime();
       const bDate = new Date(b.fechaPago || b.fecha || 0).getTime();
       return bDate - aDate;

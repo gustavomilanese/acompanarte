@@ -80,6 +80,15 @@ function operationsPanelByStatus(status) {
   return by[status] || 'border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50';
 }
 
+function formatMonthYearLabel(year, month) {
+  const y = Number(year || 0);
+  const m = Number(month || 0);
+  if (!y || !m) return '-';
+  const monthName = new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'long' });
+  const prettyMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1).replace(/\s+de\s+/i, ' ');
+  return `${prettyMonth} ${y}`;
+}
+
 function decodeBase64ToText(base64Text) {
   const normalized = String(base64Text || '').replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
@@ -221,6 +230,7 @@ export function Servicios() {
   const [extraHoursExpandedKey, setExtraHoursExpandedKey] = useState('');
   const [assignmentsOpen, setAssignmentsOpen] = useState(false);
   const [extraHoursOpen, setExtraHoursOpen] = useState(false);
+  const [extraHoursMonthFilter, setExtraHoursMonthFilter] = useState('all');
 
   const cuidadoresAsignadosEnServicio = useMemo(() => {
     if (!selectedDetail) return [];
@@ -293,6 +303,7 @@ export function Servicios() {
     setExtraHoursExpandedKey('');
     setAssignmentsOpen(false);
     setExtraHoursOpen(false);
+    setExtraHoursMonthFilter('all');
   }, [selectedId]);
 
   useEffect(() => {
@@ -318,93 +329,159 @@ export function Servicios() {
 
   const extraHoursServicio = useMemo(() => {
     if (!selectedDetail) return [];
-    const extraCobros = movimientosFinanzas
-      .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
-      .map((mov) => ({ ...mov, extraInfo: parseExtraHoursInfo(mov) }));
 
-    const pagosByRef = new Map();
-    movimientosFinanzas
-      .filter((m) => m.tipo === 'pago' && m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
-      .forEach((mov) => {
-        const info = parseExtraHoursInfo(mov);
-        const key = info.key || (info.ref ? `ref:${info.ref}` : null);
-        if (key) pagosByRef.set(key, { ...mov, extraInfo: info });
-      });
+    const extraItems = movimientosFinanzas
+      .filter((m) => m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
+      .map((mov) => ({ mov, info: parseExtraHoursInfo(mov) }));
 
-    const paired = extraCobros
-      .map((cobro) => {
-        const pairKey = cobro.extraInfo.key || (cobro.extraInfo.ref ? `ref:${cobro.extraInfo.ref}` : null);
-        const pairedPago = pairKey ? (pagosByRef.get(pairKey) || null) : null;
-        const fallbackDetail = (!cobro.extraInfo.details?.length && cobro.extraInfo.lastDetail?.concepto)
-          ? [{
-            id: `legacy-${cobro.id}`,
-            fecha: cobro.fecha ? new Date(cobro.fecha).toISOString().slice(0, 10) : null,
-            horas: Number.isFinite(cobro.extraInfo.totalHoras) ? Number(cobro.extraInfo.totalHoras) : null,
-            concepto: cobro.extraInfo.lastDetail.concepto,
-          }]
-          : [];
-        const details = (cobro.extraInfo.details || []).length > 0 ? cobro.extraInfo.details : fallbackDetail;
-        return {
-          ref: pairKey || cobro.id,
-          cobro,
-          pago: pairedPago || null,
-          info: {
-            ...cobro.extraInfo,
-            details,
-            caregiverNombre: cobro.extraInfo.caregiverNombre || pairedPago?.caregiver?.nombre || pairedPago?.extraInfo?.caregiverNombre || null,
-            caregiverId: cobro.extraInfo.caregiverId || pairedPago?.caregiverId || pairedPago?.extraInfo?.caregiverId || null,
-          },
-        };
-      });
+    const getTimestamp = (item) => new Date(
+      item?.mov?.updatedAt || item?.mov?.createdAt || item?.mov?.fecha || 0
+    ).getTime() || 0;
 
-    const consolidatedByMonth = new Map();
-    for (const item of paired) {
-      const caregiverId = item.info.caregiverId || item.pago?.caregiver?.id || item.pago?.caregiverId || 'sin-cuidador';
-      const year = Number(item.info.year || item.cobro.year || 0) || 0;
-      const month = Number(item.info.month || item.cobro.month || 0) || 0;
-      const groupedKey = `${selectedDetail.id}:${caregiverId}:${year}:${month}`;
-      const existing = consolidatedByMonth.get(groupedKey);
+    const pickCanonical = (items = []) => {
+      if (!Array.isArray(items) || items.length === 0) return null;
+      return [...items].sort((a, b) => {
+        const aDetails = Array.isArray(a.info?.details) ? a.info.details.length : 0;
+        const bDetails = Array.isArray(b.info?.details) ? b.info.details.length : 0;
+        if (aDetails !== bDetails) return bDetails - aDetails;
 
-      if (!existing) {
-        consolidatedByMonth.set(groupedKey, {
-          ...item,
-          ref: groupedKey,
-          cobro: { ...item.cobro, monto: Number(item.cobro?.monto || 0) },
-          pago: item.pago ? { ...item.pago, monto: Number(item.pago?.monto || 0) } : null,
-          info: {
-            ...item.info,
-            year,
-            month,
-            totalHoras: Number(item.info.totalHoras || 0),
-            details: [...(item.info.details || [])],
-          },
+        const aPending = String(a.mov?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0;
+        const bPending = String(b.mov?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0;
+        if (aPending !== bPending) return bPending - aPending;
+
+        return getTimestamp(b) - getTimestamp(a);
+      })[0];
+    };
+
+    const groupedByPeriod = new Map();
+    for (const item of extraItems) {
+      const caregiverId = item.info?.caregiverId || item.mov?.caregiverId || item.info?.aggregate?.caregiverId || 'sin-cuidador';
+      const year = Number(item.info?.year || item.mov?.year || item.info?.aggregate?.year || 0) || 0;
+      const month = Number(item.info?.month || item.mov?.month || item.info?.aggregate?.month || 0) || 0;
+      const key = `${selectedDetail.id}:${caregiverId}:${year}:${month}`;
+
+      if (!groupedByPeriod.has(key)) {
+        groupedByPeriod.set(key, {
+          key,
+          caregiverId,
+          year,
+          month,
+          cobros: [],
+          pagos: [],
         });
-        continue;
       }
 
-      existing.cobro.monto = Number(existing.cobro.monto || 0) + Number(item.cobro?.monto || 0);
-      if (existing.pago || item.pago) {
-        existing.pago = {
-          ...(existing.pago || item.pago || {}),
-          monto: Number(existing.pago?.monto || 0) + Number(item.pago?.monto || 0),
-          estado: String(existing.pago?.estado || '').toLowerCase() === 'pendiente' || String(item.pago?.estado || '').toLowerCase() === 'pendiente'
-            ? 'pendiente'
-            : (existing.pago?.estado || item.pago?.estado || 'pendiente'),
-        };
-      }
-      existing.info.totalHoras = Number(existing.info.totalHoras || 0) + Number(item.info.totalHoras || 0);
-      existing.info.details = [...(existing.info.details || []), ...(item.info.details || [])];
-      if (!existing.info.caregiverNombre && item.info.caregiverNombre) {
-        existing.info.caregiverNombre = item.info.caregiverNombre;
-      }
-      if (!existing.info.caregiverId && item.info.caregiverId) {
-        existing.info.caregiverId = item.info.caregiverId;
-      }
+      if (item.mov.tipo === 'cobro') groupedByPeriod.get(key).cobros.push(item);
+      if (item.mov.tipo === 'pago') groupedByPeriod.get(key).pagos.push(item);
     }
 
-    return [...consolidatedByMonth.values()]
-      .sort((a, b) => new Date(b.cobro.fecha || b.cobro.createdAt || 0) - new Date(a.cobro.fecha || a.cobro.createdAt || 0));
+    return [...groupedByPeriod.values()]
+      .map((group) => {
+        const canonicalCobro = pickCanonical(group.cobros);
+        const canonicalPago = pickCanonical(group.pagos);
+        if (!canonicalCobro) return null;
+
+        const detailSource = [canonicalCobro, canonicalPago]
+          .filter(Boolean)
+          .sort((a, b) => {
+            const aDetails = Array.isArray(a.info?.details) ? a.info.details.length : 0;
+            const bDetails = Array.isArray(b.info?.details) ? b.info.details.length : 0;
+            if (aDetails !== bDetails) return bDetails - aDetails;
+            return getTimestamp(b) - getTimestamp(a);
+          })[0] || canonicalCobro;
+
+        const details = Array.isArray(detailSource?.info?.details) ? detailSource.info.details : [];
+        const detailTotals = details.reduce((acc, detail) => ({
+          horas: acc.horas + (Number.isFinite(Number(detail?.horas)) ? Number(detail.horas) : 0),
+          montoCobro: acc.montoCobro + Number(detail?.montoCobro || 0),
+          montoPago: acc.montoPago + Number(detail?.montoPago || 0),
+        }), { horas: 0, montoCobro: 0, montoPago: 0 });
+
+        const aggregateCobroTotal = Number(canonicalCobro?.info?.aggregate?.totals?.montoCobro || 0);
+        const aggregatePagoTotal = Number(canonicalPago?.info?.aggregate?.totals?.montoPago || 0);
+
+        const cobroMonto = detailTotals.montoCobro > 0
+          ? detailTotals.montoCobro
+          : (aggregateCobroTotal > 0 ? aggregateCobroTotal : Number(canonicalCobro?.mov?.monto || 0));
+        const pagoMonto = detailTotals.montoPago > 0
+          ? detailTotals.montoPago
+          : (aggregatePagoTotal > 0 ? aggregatePagoTotal : Number(canonicalPago?.mov?.monto || 0));
+
+        const totalHoras = detailTotals.horas > 0
+          ? detailTotals.horas
+          : Number(
+            detailSource?.info?.totalHoras
+            || canonicalCobro?.info?.totalHoras
+            || canonicalPago?.info?.totalHoras
+            || 0
+          );
+
+        return {
+          ref: group.key,
+          cobro: {
+            ...canonicalCobro.mov,
+            monto: cobroMonto,
+          },
+          pago: canonicalPago
+            ? {
+              ...canonicalPago.mov,
+              monto: pagoMonto,
+            }
+            : null,
+          info: {
+            ...(detailSource?.info || canonicalCobro.info || {}),
+            year: group.year,
+            month: group.month,
+            caregiverId: group.caregiverId === 'sin-cuidador' ? null : group.caregiverId,
+            caregiverNombre: canonicalPago?.info?.caregiverNombre
+              || canonicalPago?.mov?.caregiver?.nombre
+              || canonicalCobro?.info?.caregiverNombre
+              || canonicalCobro?.mov?.caregiver?.nombre
+              || null,
+            details,
+            totalHoras,
+          },
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const aDate = new Date(a.cobro?.fecha || a.cobro?.updatedAt || a.cobro?.createdAt || 0).getTime();
+        const bDate = new Date(b.cobro?.fecha || b.cobro?.updatedAt || b.cobro?.createdAt || 0).getTime();
+        return bDate - aDate;
+      });
   }, [selectedDetail, movimientosFinanzas]);
+
+  const extraHoursPeriodOptions = useMemo(() => {
+    const values = extraHoursServicio
+      .map((item) => {
+        const year = Number(item.info.year || 0);
+        const month = Number(item.info.month || 0);
+        if (!year || !month) return null;
+        return { value: `${year}-${String(month).padStart(2, '0')}`, year, month };
+      })
+      .filter(Boolean);
+    const unique = new Map(values.map((entry) => [entry.value, entry]));
+    return [...unique.values()].sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      return b.month - a.month;
+    });
+  }, [extraHoursServicio]);
+
+  const extraHoursVisible = useMemo(() => {
+    if (extraHoursMonthFilter === 'all') return extraHoursServicio;
+    return extraHoursServicio.filter((item) => {
+      const year = Number(item.info.year || 0);
+      const month = Number(item.info.month || 0);
+      if (!year || !month) return false;
+      return `${year}-${String(month).padStart(2, '0')}` === extraHoursMonthFilter;
+    });
+  }, [extraHoursServicio, extraHoursMonthFilter]);
+
+  useEffect(() => {
+    if (extraHoursMonthFilter === 'all') return;
+    const exists = extraHoursPeriodOptions.some((option) => option.value === extraHoursMonthFilter);
+    if (!exists) setExtraHoursMonthFilter('all');
+  }, [extraHoursMonthFilter, extraHoursPeriodOptions]);
 
   const extraHoursPreview = useMemo(() => {
     const horas = Number(extraHoursForm.horas);
@@ -423,15 +500,25 @@ export function Servicios() {
     if (!selectedDetail) return { cobros: [], pagos: [] };
     const isPending = (estado) => String(estado || '').toLowerCase() === 'pendiente';
     const serviceMovements = movimientosFinanzas.filter((m) => m.serviceId === selectedDetail.id);
+    const extraPendingCobros = extraHoursServicio
+      .filter((item) => isPending(item.cobro.estado))
+      .map((item) => item.cobro);
+    const extraPendingPagos = extraHoursServicio
+      .filter((item) => item.pago && isPending(item.pago.estado))
+      .map((item) => item.pago);
+
+    const regularPendingCobros = serviceMovements
+      .filter((m) => m.tipo === 'cobro' && m.categoria !== EXTRA_HOURS_CATEGORY && isPending(m.estado));
+    const regularPendingPagos = serviceMovements
+      .filter((m) => m.tipo === 'pago' && m.categoria !== EXTRA_HOURS_CATEGORY && isPending(m.estado));
+
     return {
-      cobros: serviceMovements
-        .filter((m) => m.tipo === 'cobro' && isPending(m.estado))
+      cobros: [...regularPendingCobros, ...extraPendingCobros]
         .sort((a, b) => new Date(b.fecha || b.createdAt || 0) - new Date(a.fecha || a.createdAt || 0)),
-      pagos: serviceMovements
-        .filter((m) => m.tipo === 'pago' && isPending(m.estado))
+      pagos: [...regularPendingPagos, ...extraPendingPagos]
         .sort((a, b) => new Date(b.fecha || b.createdAt || 0) - new Date(a.fecha || a.createdAt || 0)),
     };
-  }, [selectedDetail, movimientosFinanzas]);
+  }, [selectedDetail, movimientosFinanzas, extraHoursServicio]);
 
   const pendientesCobroTotal = useMemo(
     () => movimientosServicioPendientes.cobros.reduce((acc, mov) => acc + Number(mov.monto || 0), 0),
@@ -444,13 +531,13 @@ export function Servicios() {
   );
 
   const extraHoursQuickStats = useMemo(() => {
-    return extraHoursServicio.reduce((acc, item) => ({
+    return extraHoursVisible.reduce((acc, item) => ({
       horas: acc.horas + Number(item.info.totalHoras || 0),
       cobro: acc.cobro + Number(item.cobro?.monto || 0),
       pago: acc.pago + Number(item.pago?.monto || 0),
       rows: acc.rows + 1,
     }), { horas: 0, cobro: 0, pago: 0, rows: 0 });
-  }, [extraHoursServicio]);
+  }, [extraHoursVisible]);
 
   const refreshAll = async () => {
     await loadData();
@@ -854,9 +941,9 @@ export function Servicios() {
                           <button
                             type="button"
                             onClick={() => setAssignmentsOpen((prev) => !prev)}
-                            className="inline-flex items-center justify-center h-7 min-w-7 px-2 text-xs rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                            className="inline-flex items-center justify-center h-7 px-2.5 text-xs rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                           >
-                            {assignmentsOpen ? '-' : '+'}
+                            {assignmentsOpen ? 'Ocultar' : 'Ver'}
                           </button>
                         </div>
                       </div>
@@ -919,9 +1006,9 @@ export function Servicios() {
                           <button
                             type="button"
                             onClick={() => setExtraHoursOpen((prev) => !prev)}
-                            className="inline-flex items-center justify-center h-7 min-w-7 px-2 text-xs rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                            className="inline-flex items-center justify-center h-7 px-2.5 text-xs rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                           >
-                            {extraHoursOpen ? '-' : '+'}
+                            {extraHoursOpen ? 'Ocultar' : 'Ver'}
                           </button>
                         </div>
                       </div>
@@ -943,6 +1030,22 @@ export function Servicios() {
 
                       {extraHoursOpen && (
                         <>
+                      <div className="flex items-center justify-end gap-2 mb-3">
+                        <label htmlFor="extra-hours-period-filter" className="text-xs text-slate-500">Período</label>
+                        <select
+                          id="extra-hours-period-filter"
+                          value={extraHoursMonthFilter}
+                          onChange={(e) => setExtraHoursMonthFilter(e.target.value)}
+                          className="h-8 px-2.5 rounded-md border border-slate-200 bg-white text-xs text-slate-700"
+                        >
+                          <option value="all">Todos</option>
+                          {extraHoursPeriodOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {formatMonthYearLabel(option.year, option.month)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <p className="text-xs text-slate-500 mb-3">Se acumula por cuidador y mes. El total se calcula como horas x valor hora (cobro) y horas x costo hora (pago).</p>
 
                       {extraHoursEditorOpen && (
@@ -1036,22 +1139,22 @@ export function Servicios() {
                             </tr>
                           </thead>
                           <tbody>
-                            {extraHoursServicio.length === 0 && (
+                            {extraHoursVisible.length === 0 && (
                               <tr>
                                 <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
                               </tr>
                             )}
-                            {extraHoursServicio.map((item) => {
+                            {extraHoursVisible.map((item) => {
                               const hasPago = Boolean(item.pago?.id);
                               const periodLabel = item.info.month && item.info.year
-                                ? new Date(item.info.year, item.info.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+                                ? formatMonthYearLabel(item.info.year, item.info.month)
                                 : formatPeriodo(item.cobro);
                               const hasDetails = item.info.details.length > 0;
                               const isExpanded = extraHoursExpandedKey === item.ref;
                               return (
                                 <React.Fragment key={item.ref}>
                                 <tr className="border-t border-amber-100">
-                                  <td className="px-3 py-2 text-slate-600 capitalize">{periodLabel}</td>
+                                  <td className="px-3 py-2 text-slate-600">{periodLabel}</td>
                                   <td className="px-3 py-2 text-slate-600">{item.info.caregiverNombre || item.pago?.caregiver?.nombre || 'Sin cuidador'}</td>
                                   <td className="px-3 py-2">{item.info.totalHoras ? `${item.info.totalHoras} hs` : '-'}</td>
                                   <td className="px-3 py-2">${Number(item.cobro.monto || 0).toLocaleString('es-AR')}</td>
@@ -1168,7 +1271,7 @@ export function Servicios() {
                                     <div className="flex items-center justify-between gap-2">
                                       <p className="text-xs font-medium text-slate-700 capitalize">
                                         {mov.categoria === EXTRA_HOURS_CATEGORY
-                                          ? `Horas extra · ${extraInfo?.month && extraInfo?.year ? new Date(extraInfo.year, extraInfo.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }) : formatPeriodo(mov)}`
+                                          ? `Horas extra · ${extraInfo?.month && extraInfo?.year ? formatMonthYearLabel(extraInfo.year, extraInfo.month) : formatPeriodo(mov)}`
                                           : formatPeriodo(mov)}
                                       </p>
                                       <p className="text-xs font-semibold text-slate-700">${Number(mov.monto || 0).toLocaleString('es-AR')}</p>
@@ -1219,7 +1322,7 @@ export function Servicios() {
                                     </div>
                                     <p className="text-[11px] text-slate-500 mt-1 capitalize">
                                       {extraInfo?.month && extraInfo?.year
-                                        ? new Date(extraInfo.year, extraInfo.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+                                        ? formatMonthYearLabel(extraInfo.year, extraInfo.month)
                                         : formatPeriodo(mov)}
                                     </p>
                                   </div>
