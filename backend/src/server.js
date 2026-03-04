@@ -136,6 +136,30 @@ function mapCaregiver(item) {
   }
 }
 
+const CAREGIVER_ADMIN_SUMMARY_SELECT = {
+  id: true,
+  nombre: true,
+  email: true,
+  telefono: true,
+  codigo: true,
+  disponibilidad: true,
+  estado: true,
+  tipoPerfil: true,
+  estadoProceso: true,
+  provincia: true,
+  zona: true,
+  zonaAmba: true,
+  zonasCobertura: true,
+  disponibilidadDias: true,
+  disponibilidadTurnos: true,
+  tarifaReferencia: true,
+  cvNombre: true,
+  bio: true,
+  especialidades: true,
+  createdAt: true,
+  updatedAt: true,
+}
+
 function mapCaregiverSummary(item) {
   return {
     id: item.id,
@@ -156,7 +180,7 @@ function mapCaregiverSummary(item) {
     tarifaReferencia: item.tarifaReferencia ?? null,
     cvNombre: item.cvNombre || null,
     hasAvatar: Boolean(item.avatar),
-    hasCvArchivo: Boolean(item.cvArchivo),
+    hasCvArchivo: Boolean(item.cvArchivo || item.cvNombre),
     bio: item.bio,
     especialidades: item.especialidades,
     createdAt: item.createdAt,
@@ -937,6 +961,7 @@ app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
 app.get('/api/admin/acompanantes', asyncHandler(async (_req, res) => {
   const scope = String(_req.query?.scope || 'activos').trim().toLowerCase()
   const items = await prisma.caregiver.findMany({
+    select: CAREGIVER_ADMIN_SUMMARY_SELECT,
     where: getCaregiverAdminScopeWhere(scope),
     orderBy: { nombre: 'asc' },
   })

@@ -177,6 +177,8 @@ const DISPONIBILIDAD_OPTIONS = [
   { value: 'solo tarde', label: 'Solo tarde' },
 ];
 
+const ACOMPANANTES_PAGE_SIZE = 40;
+
 function getInitials(nombre = '') {
   return nombre
     .split(' ')
@@ -332,7 +334,9 @@ export function Acompanantes() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(ACOMPANANTES_PAGE_SIZE);
   const latestListRequestRef = useRef(0);
+  const acompanantesCacheRef = useRef({ activos: null, base: null });
 
   const [formData, setFormData] = useState(getEmptyAcompananteFormData);
   const [assetState, setAssetState] = useState(getEmptyAcompananteAssetState);
@@ -373,18 +377,28 @@ export function Acompanantes() {
   }, [location.search]);
 
   const loadAcompanantes = useCallback(async (scope = 'activos') => {
+    const normalizedScope = scope === 'base' ? 'base' : 'activos';
+    const cached = acompanantesCacheRef.current[normalizedScope];
+    if (cached) {
+      setAcompanantes(cached);
+      return cached;
+    }
+
     const requestId = latestListRequestRef.current + 1;
     latestListRequestRef.current = requestId;
     setIsLoadingList(true);
     try {
-      const data = await adminApi.getAcompanantes(scope);
+      const data = await adminApi.getAcompanantes(normalizedScope);
       if (latestListRequestRef.current === requestId) {
         setAcompanantes(data);
       }
+      acompanantesCacheRef.current[normalizedScope] = data;
+      return data;
     } catch (error) {
       if (latestListRequestRef.current === requestId) {
         showError(error.message || 'No se pudieron cargar los acompañantes');
       }
+      throw error;
     } finally {
       if (latestListRequestRef.current === requestId) {
         setIsLoadingList(false);
@@ -395,6 +409,29 @@ export function Acompanantes() {
   useEffect(() => {
     loadAcompanantes(viewMode);
   }, [loadAcompanantes, viewMode]);
+
+  useEffect(() => {
+    const otherScope = viewMode === 'activos' ? 'base' : 'activos';
+    if (acompanantesCacheRef.current[otherScope]) return;
+
+    let cancelled = false;
+
+    adminApi.getAcompanantes(otherScope)
+      .then((data) => {
+        if (!cancelled) {
+          acompanantesCacheRef.current[otherScope] = data;
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewMode]);
+
+  const invalidateAcompanantesCache = useCallback(() => {
+    acompanantesCacheRef.current = { activos: null, base: null };
+  }, []);
 
   const indexedAcompanantes = useMemo(() => acompanantes.map((a) => {
     const resolvedZonaAmba = a.zonaAmba || inferZonaAmba(a.provincia, a.zona);
@@ -458,6 +495,15 @@ export function Acompanantes() {
 
   const isFilterTransitionPending = deferredSearchQuery !== searchQuery || deferredFilterZonaAmba !== filterZonaAmba;
   const publicSignupLink = `${window.location.origin}/postulate-cuidador`;
+  const visibleAcompanantes = useMemo(
+    () => filteredAcompanantes.slice(0, visibleCount),
+    [filteredAcompanantes, visibleCount],
+  );
+  const hasMoreAcompanantes = filteredAcompanantes.length > visibleCount;
+
+  useEffect(() => {
+    setVisibleCount(ACOMPANANTES_PAGE_SIZE);
+  }, [viewMode, deferredSearchQuery, deferredFilterZonaAmba, acompanantes.length]);
 
   const closeModal = () => {
     setShowModal(false);
@@ -504,6 +550,7 @@ export function Acompanantes() {
 
     try {
       const payload = buildAcompanantePayload(formData, assetState);
+      invalidateAcompanantesCache();
 
       if (editingAcompanante) {
         await adminApi.updateAcompanante(editingAcompanante.id, payload);
@@ -527,6 +574,7 @@ export function Acompanantes() {
     const currentViewMode = viewMode;
 
     try {
+      invalidateAcompanantesCache();
       if (nextEstado === 'inactivo') {
         await adminApi.deleteAcompanante(item.id);
         showSuccess('Acompañante eliminado');
@@ -546,6 +594,7 @@ export function Acompanantes() {
     const currentViewMode = viewMode;
 
     try {
+      invalidateAcompanantesCache();
       await adminApi.updateAcompanante(item.id, {
         estado: 'activo',
         estadoProceso: 'aprobado',
@@ -783,7 +832,12 @@ export function Acompanantes() {
               </CardContent>
             </Card>
           )}
-          {!isLoadingList && filteredAcompanantes.map((acompanante) => (
+          {!isLoadingList && filteredAcompanantes.length > 0 && (
+            <div className="flex items-center justify-between gap-3 text-xs text-slate-500 px-1">
+              <span>Mostrando {visibleAcompanantes.length} de {filteredAcompanantes.length} cuidadores</span>
+            </div>
+          )}
+          {!isLoadingList && visibleAcompanantes.map((acompanante) => (
             <Card key={acompanante.id}>
               <CardContent>
                 <div className="flex items-center justify-between">
@@ -900,6 +954,21 @@ export function Acompanantes() {
               </CardContent>
             </Card>
           ))}
+          {!isLoadingList && hasMoreAcompanantes && (
+            <Card>
+              <CardContent>
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount((prev) => prev + ACOMPANANTES_PAGE_SIZE)}
+                    className="px-4 py-2 rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Mostrar más
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
 
