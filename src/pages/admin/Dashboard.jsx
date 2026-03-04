@@ -288,17 +288,17 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
   }
 
   const total = usedItems.reduce((acc, z) => acc + z.value, 0) || 1;
-  const cx = 64;
-  const cy = 64;
-  const radius = 42;
+  const cx = 56;
+  const cy = 56;
+  const radius = 36;
   const circumference = 2 * Math.PI * radius;
   let accumulated = 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <div className="flex justify-center">
-        <div className="relative h-[128px] w-[128px]">
-          <svg width="128" height="128" viewBox="0 0 128 128">
+        <div className="relative h-[112px] w-[112px]">
+          <svg width="112" height="112" viewBox="0 0 112 112">
             <defs>
               {usedItems.map((item, idx) => (
                 <linearGradient key={`${gradientPrefix}-grad-${item.zona}`} id={`${gradientPrefix}-grad-${idx}`} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -307,7 +307,7 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
                 </linearGradient>
               ))}
             </defs>
-            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="18" />
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="16" />
             {usedItems.map((item, index) => {
               const dash = (Number(item.value || 0) / total) * circumference;
               const gap = Math.max(circumference - dash, 0);
@@ -322,7 +322,7 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
                   r={radius}
                   fill="none"
                   stroke={`url(#${gradientPrefix}-grad-${index})`}
-                  strokeWidth="18"
+                  strokeWidth="16"
                   strokeLinecap="round"
                   strokeDasharray={`${dash} ${gap}`}
                   strokeDashoffset={offset}
@@ -330,21 +330,21 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
                 />
               );
             })}
-            <circle cx={cx} cy={cy} r={24} fill="#ffffff" />
+            <circle cx={cx} cy={cy} r={21} fill="#ffffff" />
           </svg>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+      <div className="flex flex-wrap justify-center gap-2">
         {usedItems.map((item, index) => (
-          <div key={item.zona} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
-            <div className="flex items-center gap-2 min-w-0">
+          <div key={item.zona} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-1.5">
+            <div className="flex items-center gap-2">
               <span
-                className="h-2.5 w-2.5 rounded-full shrink-0"
+                className="h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: colors[index % colors.length][0] }}
               />
-              <span className="text-xs text-slate-600 truncate">{item.zona}</span>
+              <span className="text-[11px] text-slate-600">{item.zona}</span>
             </div>
-            <span className="text-xs font-medium text-slate-700">
+            <span className="text-[11px] font-medium text-slate-700">
               {item.value} ({Math.round((item.value / total) * 100)}%)
             </span>
           </div>
@@ -1190,11 +1190,11 @@ export function AdminDashboard() {
         </div>
       </header>
 
-      <div className="relative p-4 max-w-[1640px] mx-auto space-y-8 lg:grid lg:grid-cols-2 lg:gap-x-6 lg:gap-y-8 lg:space-y-0">
+      <div className="relative p-4 max-w-[1640px] mx-auto space-y-6 lg:grid lg:grid-cols-2 lg:gap-x-6 lg:gap-y-6 lg:space-y-0">
         <Card className="order-1 bg-white border border-slate-200 shadow-md rounded-2xl">
           <CardContent>
             <h2 className="text-xl font-bold text-dark mb-4">Resumen operativo</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 min-h-[110px]">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 min-h-[96px]">
               {statCards.map((stat) => (
                 <button
                   key={stat.label}
@@ -1213,7 +1213,7 @@ export function AdminDashboard() {
                       return;
                     }
                   }}
-                  className={`relative overflow-hidden rounded-2xl border p-3 pt-6 text-left bg-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg ${stat.border}`}
+                  className={`relative overflow-hidden rounded-2xl border p-3 pt-5 text-left bg-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg ${stat.border}`}
                 >
                   <span className={`absolute left-3 right-3 top-3 h-1 rounded-full ${stat.accent}`} />
                   <div className="flex items-center justify-between">
@@ -1226,7 +1226,7 @@ export function AdminDashboard() {
                 </button>
               ))}
             </div>
-            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-8">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-6">
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-emerald-50/20 to-teal-50/20 shadow-sm p-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Cuidadores por zona</p>
                 <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" colors={CAREGIVER_PIE_COLORS} />
@@ -1238,22 +1238,26 @@ export function AdminDashboard() {
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-white shadow-sm p-3 md:col-span-2">
-                <p className="text-sm font-semibold text-slate-700 mb-3">Altas por mes</p>
-                <div className="h-32 flex items-end gap-2">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-700">Altas por mes</p>
+                  <span className="text-[11px] text-slate-400 uppercase tracking-[0.12em]">
+                    {altasPorMes[0]?.yearLabel || new Date().getFullYear()}
+                  </span>
+                </div>
+                <div className="h-24 flex items-end gap-1.5">
                   {(() => {
                     const max = Math.max(1, ...altasPorMes.map((m) => m.value));
                     return altasPorMes.map((m) => (
                       <div key={m.key} className="flex-1 min-w-0 flex flex-col items-center gap-1">
                         <span className="text-[10px] text-slate-500">{m.value}</span>
-                        <div className="w-full bg-slate-100 rounded-t-md flex items-end h-24">
+                        <div className="w-full bg-slate-100 rounded-md flex items-end h-16 overflow-hidden">
                           <div
-                            className="w-full bg-gradient-to-t from-sky-500 via-cyan-400 to-indigo-300 rounded-t-md shadow-sm"
+                            className="w-full bg-gradient-to-t from-sky-500 via-cyan-400 to-indigo-300 rounded-md shadow-sm"
                             style={{ height: `${(m.value / max) * 100}%` }}
                           />
                         </div>
                         <div className="w-full text-center leading-tight">
                           <span className="block text-[10px] text-slate-500 uppercase truncate">{m.monthLabel}</span>
-                          <span className="block text-[10px] text-slate-400">{m.yearLabel}</span>
                         </div>
                       </div>
                     ));
