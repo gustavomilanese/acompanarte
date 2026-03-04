@@ -280,7 +280,13 @@ function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) 
   return '';
 }
 
-function DashboardZonePieChart({ items, gradientPrefix, colors }) {
+function DashboardZonePieChart({
+  items,
+  gradientPrefix,
+  colors,
+  strokeWidth = 16,
+  innerRadius = 21,
+}) {
   const usedItems = items.filter((item) => Number(item.value || 0) > 0);
 
   if (usedItems.length === 0) {
@@ -307,7 +313,7 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
                 </linearGradient>
               ))}
             </defs>
-            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="16" />
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
             {usedItems.map((item, index) => {
               const dash = (Number(item.value || 0) / total) * circumference;
               const gap = Math.max(circumference - dash, 0);
@@ -322,7 +328,7 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
                   r={radius}
                   fill="none"
                   stroke={`url(#${gradientPrefix}-grad-${index})`}
-                  strokeWidth="16"
+                  strokeWidth={strokeWidth}
                   strokeLinecap="round"
                   strokeDasharray={`${dash} ${gap}`}
                   strokeDashoffset={offset}
@@ -330,7 +336,7 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
                 />
               );
             })}
-            <circle cx={cx} cy={cy} r={21} fill="#ffffff" />
+            <circle cx={cx} cy={cy} r={innerRadius} fill="#ffffff" />
           </svg>
         </div>
       </div>
@@ -344,9 +350,7 @@ function DashboardZonePieChart({ items, gradientPrefix, colors }) {
               />
               <span className="text-[11px] text-slate-600">{item.zona}</span>
             </div>
-            <span className="text-[11px] font-medium text-slate-700">
-              {item.value} ({Math.round((item.value / total) * 100)}%)
-            </span>
+            <span className="text-[11px] font-medium text-slate-700">{item.value}</span>
           </div>
         ))}
       </div>
@@ -1229,7 +1233,13 @@ export function AdminDashboard() {
             <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-3 mt-6">
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-emerald-50/20 to-teal-50/20 shadow-sm p-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Cuidadores por zona</p>
-                <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" colors={CAREGIVER_PIE_COLORS} />
+                <DashboardZonePieChart
+                  items={cuidadoresPorZona}
+                  gradientPrefix="caregiver-zone"
+                  colors={CAREGIVER_PIE_COLORS}
+                  strokeWidth={20}
+                  innerRadius={16}
+                />
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-3">
