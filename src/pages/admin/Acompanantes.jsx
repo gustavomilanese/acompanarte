@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -166,6 +166,12 @@ const ESTADO_PROCESO_OPTIONS = [
   { value: 'descartado', label: 'Descartado' },
 ];
 
+const DISPONIBILIDAD_OPTIONS = [
+  { value: 'mañana y tarde', label: 'Mañana y tarde' },
+  { value: 'solo mañana', label: 'Solo mañana' },
+  { value: 'solo tarde', label: 'Solo tarde' },
+];
+
 function getInitials(nombre = '') {
   return nombre
     .split(' ')
@@ -253,13 +259,53 @@ function mapAcompananteToFormData(acompanante) {
     disponibilidadDias: acompanante.disponibilidadDias || [],
     disponibilidadTurnos: acompanante.disponibilidadTurnos || [],
     tarifaReferencia: acompanante.tarifaReferencia ?? '',
-    avatar: '',
+    avatar: acompanante.avatar || '',
     cvNombre: '',
     cvMimeType: '',
     cvArchivo: '',
     bio: acompanante.bio || '',
     especialidades: acompanante.especialidades || [],
   };
+}
+
+function buildAcompanantePayload(formData, assetState) {
+  const payload = {
+    nombre: formData.nombre,
+    email: formData.email,
+    telefono: formData.telefono,
+    codigo: formData.codigo,
+    disponibilidad: formData.disponibilidad,
+    estado: formData.estado,
+    tipoPerfil: formData.tipoPerfil || 'cuidador',
+    estadoProceso: formData.estadoProceso || 'aprobado',
+    provincia: formData.provincia || null,
+    zona: formData.zona || null,
+    zonaAmba: formData.zonaAmba || inferZonaAmba(formData.provincia, formData.zona) || null,
+    zonasCobertura: Array.isArray(formData.zonasCobertura) ? formData.zonasCobertura : [],
+    disponibilidadDias: Array.isArray(formData.disponibilidadDias) ? formData.disponibilidadDias : [],
+    disponibilidadTurnos: Array.isArray(formData.disponibilidadTurnos) ? formData.disponibilidadTurnos : [],
+    tarifaReferencia: formData.tarifaReferencia === '' ? null : Number(formData.tarifaReferencia),
+    bio: formData.bio || null,
+    especialidades: Array.isArray(formData.especialidades) ? formData.especialidades : [],
+  };
+
+  if (assetState.avatarMode === 'replace') {
+    payload.avatar = formData.avatar || null;
+  } else if (assetState.avatarMode === 'remove') {
+    payload.avatar = null;
+  }
+
+  if (assetState.cvMode === 'replace') {
+    payload.cvNombre = formData.cvNombre || null;
+    payload.cvMimeType = formData.cvMimeType || null;
+    payload.cvArchivo = formData.cvArchivo || null;
+  } else if (assetState.cvMode === 'remove') {
+    payload.cvNombre = null;
+    payload.cvMimeType = null;
+    payload.cvArchivo = null;
+  }
+
+  return payload;
 }
 
 export function Acompanantes() {
@@ -274,8 +320,10 @@ export function Acompanantes() {
   const [showModal, setShowModal] = useState(false);
   const [editingAcompanante, setEditingAcompanante] = useState(null);
   const [downloadingCvId, setDownloadingCvId] = useState('');
+  const [loadingEditId, setLoadingEditId] = useState('');
   const [confirmEstadoModal, setConfirmEstadoModal] = useState(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState(getEmptyAcompananteFormData);
   const [assetState, setAssetState] = useState(getEmptyAcompananteAssetState);
@@ -313,18 +361,18 @@ export function Acompanantes() {
     }
   }, [location.search]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const data = await adminApi.getAcompanantes();
-        setAcompanantes(data);
-      } catch (error) {
-        showError(error.message || 'No se pudieron cargar los acompañantes');
-      }
-    };
-
-    loadData();
+  const loadAcompanantes = useCallback(async () => {
+    try {
+      const data = await adminApi.getAcompanantes();
+      setAcompanantes(data);
+    } catch (error) {
+      showError(error.message || 'No se pudieron cargar los acompañantes');
+    }
   }, [showError]);
+
+  useEffect(() => {
+    loadAcompanantes();
+  }, [loadAcompanantes]);
 
   const filteredAcompanantes = useMemo(() => {
     return acompanantes.filter((a) => {
@@ -382,9 +430,13 @@ export function Acompanantes() {
 
   const closeModal = () => {
     setShowModal(false);
+    setEditingAcompanante(null);
+    setFormData(getEmptyAcompananteFormData());
+    setAssetState(getEmptyAcompananteAssetState());
+    setLoadingEditId('');
   };
 
-  const handleOpenModal = (acompanante = null) => {
+  const handleOpenModal = async (acompanante = null) => {
     if (!acompanante) {
       setEditingAcompanante(null);
       setFormData(getEmptyAcompananteFormData());
@@ -393,47 +445,33 @@ export function Acompanantes() {
       return;
     }
 
-    setEditingAcompanante(acompanante);
-    setFormData(mapAcompananteToFormData(acompanante));
-    setAssetState({
-      hasAvatar: Boolean(acompanante.hasAvatar),
-      hasCv: Boolean(acompanante.hasCvArchivo),
-      currentCvNombre: acompanante.cvNombre || '',
-      avatarMode: 'keep',
-      cvMode: 'keep',
-    });
-    setShowModal(true);
+    setLoadingEditId(acompanante.id);
+    try {
+      const detail = await adminApi.getAcompanante(acompanante.id);
+      const nextAcompanante = { ...acompanante, ...detail };
+      setEditingAcompanante(nextAcompanante);
+      setFormData(mapAcompananteToFormData(nextAcompanante));
+      setAssetState({
+        hasAvatar: Boolean(nextAcompanante.hasAvatar),
+        hasCv: Boolean(nextAcompanante.hasCvArchivo),
+        currentCvNombre: nextAcompanante.cvNombre || '',
+        avatarMode: 'keep',
+        cvMode: 'keep',
+      });
+      setShowModal(true);
+    } catch (error) {
+      showError(error.message || 'No se pudo abrir el acompañante');
+    } finally {
+      setLoadingEditId('');
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setIsSaving(true);
 
     try {
-      const payload = {
-        ...formData,
-        especialidades: Array.isArray(formData.especialidades) ? formData.especialidades : [],
-        zonasCobertura: Array.isArray(formData.zonasCobertura) ? formData.zonasCobertura : [],
-        disponibilidadDias: Array.isArray(formData.disponibilidadDias) ? formData.disponibilidadDias : [],
-        disponibilidadTurnos: Array.isArray(formData.disponibilidadTurnos) ? formData.disponibilidadTurnos : [],
-        tarifaReferencia: formData.tarifaReferencia === '' ? null : Number(formData.tarifaReferencia),
-        zonaAmba: formData.zonaAmba || inferZonaAmba(formData.provincia, formData.zona) || null,
-      };
-
-      if (assetState.avatarMode === 'replace') {
-        payload.avatar = formData.avatar || null;
-      } else if (assetState.avatarMode === 'remove') {
-        payload.avatar = null;
-      }
-
-      if (assetState.cvMode === 'replace') {
-        payload.cvNombre = formData.cvNombre || null;
-        payload.cvMimeType = formData.cvMimeType || null;
-        payload.cvArchivo = formData.cvArchivo || null;
-      } else if (assetState.cvMode === 'remove') {
-        payload.cvNombre = null;
-        payload.cvMimeType = null;
-        payload.cvArchivo = null;
-      }
+      const payload = buildAcompanantePayload(formData, assetState);
 
       if (editingAcompanante) {
         const updated = await adminApi.updateAcompanante(editingAcompanante.id, payload);
@@ -445,9 +483,11 @@ export function Acompanantes() {
         showSuccess('Acompañante creado correctamente');
       }
 
-      setShowModal(false);
+      closeModal();
     } catch (error) {
       showError(error.message || 'No se pudo guardar el acompañante');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -462,10 +502,7 @@ export function Acompanantes() {
         return;
       }
 
-      const updated = await adminApi.updateAcompanante(item.id, {
-        ...item,
-        estado: nextEstado,
-      });
+      const updated = await adminApi.updateAcompanante(item.id, { estado: nextEstado });
       setAcompanantes((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       showSuccess('Acompañante dado de alta');
     } catch (error) {
@@ -476,7 +513,6 @@ export function Acompanantes() {
   const aprobarPerfil = async (item) => {
     try {
       const updated = await adminApi.updateAcompanante(item.id, {
-        ...item,
         estado: 'activo',
         estadoProceso: 'aprobado',
       });
@@ -812,10 +848,15 @@ export function Acompanantes() {
                     </button>
                     <button
                       onClick={() => handleOpenModal(acompanante)}
+                      disabled={loadingEditId === acompanante.id}
                       className="p-2 hover:bg-light-200 rounded-lg transition-colors"
                       title="Modificar acompañante"
                     >
-                      <Pencil className="w-5 h-5 text-dark-400" />
+                      {loadingEditId === acompanante.id ? (
+                        <span className="text-xs text-dark-400">...</span>
+                      ) : (
+                        <Pencil className="w-5 h-5 text-dark-400" />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -933,9 +974,12 @@ export function Acompanantes() {
               onChange={(e) => setFormData({ ...formData, disponibilidad: e.target.value })}
               className="w-full px-4 py-3 bg-white border-2 border-light-300 rounded-xl text-dark"
             >
-              <option value="mañana y tarde">Mañana y tarde</option>
-              <option value="solo mañana">Solo mañana</option>
-              <option value="solo tarde">Solo tarde</option>
+              {!DISPONIBILIDAD_OPTIONS.some((option) => option.value === formData.disponibilidad) && formData.disponibilidad && (
+                <option value={formData.disponibilidad}>{formData.disponibilidad}</option>
+              )}
+              {DISPONIBILIDAD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1127,8 +1171,8 @@ export function Acompanantes() {
             >
               Cancelar
             </Button>
-            <Button type="submit" fullWidth>
-              {editingAcompanante ? 'Guardar cambios' : 'Crear acompañante'}
+            <Button type="submit" fullWidth disabled={isSaving}>
+              {isSaving ? 'Guardando...' : (editingAcompanante ? 'Guardar cambios' : 'Crear acompañante')}
             </Button>
           </div>
         </form>

@@ -164,6 +164,13 @@ function mapCaregiverSummary(item) {
   }
 }
 
+function mapCaregiverDetail(item) {
+  return {
+    ...mapCaregiverSummary(item),
+    avatar: item.avatar || null,
+  }
+}
+
 function mapPatient(item) {
   return {
     id: item.id,
@@ -384,6 +391,46 @@ function toCaregiverInput(body) {
   }
 
   return data
+}
+
+function mergeCaregiverForUpdate(existing, body) {
+  const merged = {
+    nombre: body.nombre ?? existing.nombre,
+    email: body.email ?? existing.email,
+    telefono: body.telefono ?? existing.telefono,
+    codigo: body.codigo ?? existing.codigo,
+    disponibilidad: body.disponibilidad ?? existing.disponibilidad,
+    estado: body.estado ?? existing.estado,
+    tipoPerfil: body.tipoPerfil ?? existing.tipoPerfil,
+    estadoProceso: body.estadoProceso ?? existing.estadoProceso,
+    provincia: Object.prototype.hasOwnProperty.call(body, 'provincia') ? body.provincia : existing.provincia,
+    zona: Object.prototype.hasOwnProperty.call(body, 'zona') ? body.zona : existing.zona,
+    zonaAmba: Object.prototype.hasOwnProperty.call(body, 'zonaAmba') ? body.zonaAmba : existing.zonaAmba,
+    zonasCobertura: Object.prototype.hasOwnProperty.call(body, 'zonasCobertura') ? body.zonasCobertura : existing.zonasCobertura,
+    disponibilidadDias: Object.prototype.hasOwnProperty.call(body, 'disponibilidadDias') ? body.disponibilidadDias : existing.disponibilidadDias,
+    disponibilidadTurnos: Object.prototype.hasOwnProperty.call(body, 'disponibilidadTurnos') ? body.disponibilidadTurnos : existing.disponibilidadTurnos,
+    tarifaReferencia: Object.prototype.hasOwnProperty.call(body, 'tarifaReferencia') ? body.tarifaReferencia : existing.tarifaReferencia,
+    bio: Object.prototype.hasOwnProperty.call(body, 'bio') ? body.bio : existing.bio,
+    especialidades: Object.prototype.hasOwnProperty.call(body, 'especialidades') ? body.especialidades : existing.especialidades,
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'avatar')) {
+    merged.avatar = body.avatar
+  } else {
+    merged.avatar = existing.avatar
+  }
+
+  if (['cvNombre', 'cvMimeType', 'cvArchivo'].some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+    merged.cvNombre = body.cvNombre
+    merged.cvMimeType = body.cvMimeType
+    merged.cvArchivo = body.cvArchivo
+  } else {
+    merged.cvNombre = existing.cvNombre
+    merged.cvMimeType = existing.cvMimeType
+    merged.cvArchivo = existing.cvArchivo
+  }
+
+  return merged
 }
 
 function sanitizePhone(value = '') {
@@ -878,7 +925,7 @@ app.get('/api/admin/acompanantes', asyncHandler(async (_req, res) => {
 
 app.get('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
   const item = await prisma.caregiver.findUniqueOrThrow({ where: { id: req.params.id } })
-  res.json(mapCaregiverSummary(item))
+  res.json(mapCaregiverDetail(item))
 }))
 
 app.get('/api/admin/acompanantes/:id/cv', asyncHandler(async (req, res) => {
@@ -911,7 +958,8 @@ app.post('/api/admin/acompanantes', asyncHandler(async (req, res) => {
 }))
 
 app.put('/api/admin/acompanantes/:id', asyncHandler(async (req, res) => {
-  const data = toCaregiverInput(req.body)
+  const existing = await prisma.caregiver.findUniqueOrThrow({ where: { id: req.params.id } })
+  const data = toCaregiverInput(mergeCaregiverForUpdate(existing, req.body || {}))
   const item = await prisma.caregiver.update({ where: { id: req.params.id }, data })
   res.json(mapCaregiverSummary(item))
 }))
