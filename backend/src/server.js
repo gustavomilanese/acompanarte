@@ -172,19 +172,19 @@ function mapCaregiverDetail(item) {
 }
 
 function getCaregiverAdminScopeWhere(scope) {
-  const approvedActiveWhere = {
-    estado: 'activo',
-    OR: [
-      { estadoProceso: 'aprobado' },
-      { estadoProceso: { equals: null } },
-    ],
-  }
-
   if (scope === 'base') {
-    return { NOT: approvedActiveWhere }
+    return {
+      OR: [
+        { estado: { not: 'activo' } },
+        { estadoProceso: { not: 'aprobado' } },
+      ],
+    }
   }
 
-  return approvedActiveWhere
+  return {
+    estado: 'activo',
+    estadoProceso: 'aprobado',
+  }
 }
 
 function mapPatient(item) {
