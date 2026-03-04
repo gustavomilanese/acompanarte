@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users,
@@ -120,6 +120,7 @@ const PIE_COLORS = [
 ];
 const ZONAS_AMBA = ['CABA', 'Zona Norte', 'Zona Sur', 'Zona Oeste'];
 const ALTAS_POR_PAGINA = 4;
+const DASHBOARD_FINANCE_RANGE_START = new Date(2026, 0, 1, 0, 0, 0, 0);
 const CURRENCY_FORMATTER = new Intl.NumberFormat('es-AR', {
   style: 'currency',
   currency: 'ARS',
@@ -147,7 +148,7 @@ export function AdminDashboard() {
   const [acompanantes, setAcompanantes] = useState([]);
   const [pacientes, setPacientes] = useState([]);
   const [servicios, setServicios] = useState([]);
-  const [finanzasResumen, setFinanzasResumen] = useState(null);
+  const [finanzasMovimientos, setFinanzasMovimientos] = useState([]);
   const [showNuevoServicio, setShowNuevoServicio] = useState(false);
   const [showDetalleStats, setShowDetalleStats] = useState(false);
   const [statSeleccionada, setStatSeleccionada] = useState(null);
@@ -225,9 +226,9 @@ export function AdminDashboard() {
       showError(error.message || 'No se pudo cargar el dashboard');
     }
 
-    adminApi.getFinanzasResumen()
-      .then((finanzasResumenData) => setFinanzasResumen(finanzasResumenData))
-      .catch(() => setFinanzasResumen(null));
+    adminApi.getFinanzasMovimientos()
+      .then((movimientos) => setFinanzasMovimientos(movimientos))
+      .catch(() => setFinanzasMovimientos([]));
   };
 
   useEffect(() => {
@@ -424,19 +425,37 @@ export function AdminDashboard() {
 
   const cuidadoresActivos = acompanantes.filter((a) => a.estado === 'activo').length;
   const resolvedAltasExpanded = altasExpanded ?? (altasPendientes.length > 0);
-  const finanzasPeriodoLabel = finanzasResumen?.period
-    ? new Date(finanzasResumen.period.year, Number(finanzasResumen.period.month || 1) - 1, 1)
-      .toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
-    : 'este mes';
-  const cajaDisponible = Number(finanzasResumen?.totalCobradoMes || 0)
-    - Number(finanzasResumen?.totalPagadoMes || 0)
-    - Number(finanzasResumen?.totalAdelantosMes || 0);
+  const dashboardFinanceRangeEnd = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  }, []);
+  const isDashboardMovementInRange = useCallback((movement) => {
+    const ref = movement.fechaPago ? new Date(movement.fechaPago) : new Date(movement.fecha);
+    return ref >= DASHBOARD_FINANCE_RANGE_START && ref <= dashboardFinanceRangeEnd;
+  }, [dashboardFinanceRangeEnd]);
+  const calcularDashboardAcumulado = useCallback((tipo) => (
+    finanzasMovimientos
+      .filter((m) => m.tipo === tipo)
+      .filter((m) => String(m.estado || '').toLowerCase() !== 'pendiente')
+      .filter(isDashboardMovementInRange)
+      .reduce((acc, m) => acc + Number(m.monto || 0), 0)
+  ), [finanzasMovimientos, isDashboardMovementInRange]);
+  const calcularDashboardPendiente = useCallback((tipo) => (
+    finanzasMovimientos
+      .filter((m) => m.tipo === tipo)
+      .filter((m) => String(m.estado || '').toLowerCase() === 'pendiente')
+      .filter(isDashboardMovementInRange)
+      .reduce((acc, m) => acc + Number(m.monto || 0), 0)
+  ), [finanzasMovimientos, isDashboardMovementInRange]);
+  const cajaDisponible = calcularDashboardAcumulado('cobro')
+    - calcularDashboardAcumulado('pago')
+    - calcularDashboardAcumulado('retiro');
   const resumenFinanzasCards = [
     {
       key: 'caja',
       title: 'Caja disponible',
       value: CURRENCY_FORMATTER.format(cajaDisponible),
-      hint: `${finanzasPeriodoLabel}`,
+      hint: 'Acumulado desde enero 2026',
       className: 'border-teal-200 bg-gradient-to-br from-teal-50 via-white to-white',
       accent: 'bg-teal-500',
       onClick: () => navigate('/admin/finanzas'),
@@ -444,8 +463,8 @@ export function AdminDashboard() {
     {
       key: 'cobros_pendientes',
       title: 'Pendiente de cobro',
-      value: CURRENCY_FORMATTER.format(Number(finanzasResumen?.cobrosPendientesRegistrados || 0)),
-      hint: `${Number(finanzasResumen?.cobrosPendientes || 0)} registro${Number(finanzasResumen?.cobrosPendientes || 0) === 1 ? '' : 's'} pendiente${Number(finanzasResumen?.cobrosPendientes || 0) === 1 ? '' : 's'}`,
+      value: CURRENCY_FORMATTER.format(calcularDashboardPendiente('cobro')),
+      hint: 'Pendientes desde enero 2026',
       className: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white',
       accent: 'bg-emerald-500',
       onClick: () => navigate('/admin/finanzas'),
@@ -453,8 +472,8 @@ export function AdminDashboard() {
     {
       key: 'pagos_pendientes',
       title: 'Pendiente de pago',
-      value: CURRENCY_FORMATTER.format(Number(finanzasResumen?.pagosPendientesRegistrados || 0)),
-      hint: `${Number(finanzasResumen?.pagosPendientesCuidadores || 0)} cuidador${Number(finanzasResumen?.pagosPendientesCuidadores || 0) === 1 ? '' : 'es'} pendiente${Number(finanzasResumen?.pagosPendientesCuidadores || 0) === 1 ? '' : 's'}`,
+      value: CURRENCY_FORMATTER.format(calcularDashboardPendiente('pago')),
+      hint: 'Pendientes desde enero 2026',
       className: 'border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white',
       accent: 'bg-violet-500',
       onClick: () => navigate('/admin/finanzas'),
@@ -1234,11 +1253,8 @@ export function AdminDashboard() {
 
           <Card className="bg-gradient-to-br from-white via-slate-50 to-slate-100 border border-slate-200 shadow-md rounded-2xl">
             <CardContent>
-              <button
-                type="button"
-                onClick={() => setAltasExpanded((prev) => !(prev ?? (altasPendientes.length > 0)))}
-                className="w-full flex items-center justify-between gap-3 mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left"
-              >
+              <div className="w-full mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="font-semibold text-dark">Gestión de altas</h3>
                   <p className="text-xs text-slate-500 mt-1">
@@ -1249,31 +1265,56 @@ export function AdminDashboard() {
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="hidden md:flex items-center gap-1">
-                    <span className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-                      altasTab === 'pendientes'
-                        ? 'bg-sky-600 text-white border-sky-600'
-                        : 'bg-white/90 text-slate-600 border-slate-200'
-                    }`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAltasTab('pendientes');
+                        setAltasExpanded(true);
+                      }}
+                      className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                        altasTab === 'pendientes'
+                          ? 'bg-sky-600 text-white border-sky-600'
+                          : 'bg-white/90 text-slate-600 border-slate-200'
+                      }`}
+                    >
                       Pendientes {altasPendientes.length}
-                    </span>
-                    <span className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-                      altasTab === 'realizadas'
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-white/90 text-slate-600 border-slate-200'
-                    }`}>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAltasTab('realizadas');
+                        setAltasExpanded(true);
+                      }}
+                      className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                        altasTab === 'realizadas'
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white/90 text-slate-600 border-slate-200'
+                      }`}
+                    >
                       Realizadas {altasRealizadas.length}
-                    </span>
+                    </button>
                   </div>
-                  <ChevronDown className={`w-5 h-5 text-slate-500 transition-transform ${resolvedAltasExpanded ? 'rotate-180' : ''}`} />
+                  <button
+                    type="button"
+                    onClick={() => setAltasExpanded((prev) => !(prev ?? (altasPendientes.length > 0)))}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
+                    aria-label={resolvedAltasExpanded ? 'Contraer gestión de altas' : 'Expandir gestión de altas'}
+                  >
+                    <ChevronDown className={`w-5 h-5 transition-transform ${resolvedAltasExpanded ? 'rotate-180' : ''}`} />
+                  </button>
                 </div>
-              </button>
+                </div>
+              </div>
 
               {resolvedAltasExpanded ? (
               <>
               <div className="flex items-center gap-1 mb-4 md:hidden">
                 <button
                   type="button"
-                  onClick={() => setAltasTab('pendientes')}
+                  onClick={() => {
+                    setAltasTab('pendientes');
+                    setAltasExpanded(true);
+                  }}
                   className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                     altasTab === 'pendientes'
                       ? 'bg-sky-600 text-white border-sky-600'
@@ -1284,7 +1325,10 @@ export function AdminDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAltasTab('realizadas')}
+                  onClick={() => {
+                    setAltasTab('realizadas');
+                    setAltasExpanded(true);
+                  }}
                   className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                     altasTab === 'realizadas'
                       ? 'bg-emerald-600 text-white border-emerald-600'
