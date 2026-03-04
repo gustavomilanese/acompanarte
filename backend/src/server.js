@@ -2563,6 +2563,7 @@ app.put('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(asy
 
       const aggregate = parseExtraHoursAggregateNotes(movement.notas || '')
       const candidate = {
+        movementId: movement.id,
         caregiverId: aggregate?.caregiverId || movement.caregiverId || null,
         year: Number(aggregate?.year || movement.year || 0) || 0,
         month: Number(aggregate?.month || movement.month || 0) || 0,
@@ -2595,9 +2596,16 @@ app.put('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(asy
       ...originScoped.cobros,
       ...originScoped.pagos,
     ])
-    const originDetails = dedupeExtraHoursDetails(
+    const originMovement = allMovements.find((movement) => movement.id === originContext.movementId) || null
+    const canonicalDetails = dedupeExtraHoursDetails(
       readExtraHoursDetailsFromMovement(originCanonical, fecha)
     )
+    const sourceDetails = dedupeExtraHoursDetails(
+      readExtraHoursDetailsFromMovement(originMovement, fecha)
+    )
+    const originDetails = canonicalDetails.some((detailItem) => String(detailItem.id) === entryId)
+      ? canonicalDetails
+      : sourceDetails
 
     const previousDetail = originDetails.find((detailItem) => String(detailItem.id) === entryId)
     if (!previousDetail) {
@@ -2743,6 +2751,7 @@ app.delete('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(
       if (!details.some((detailItem) => String(detailItem.id) === entryId)) continue
       const aggregate = parseExtraHoursAggregateNotes(movement.notas || '')
       const candidate = {
+        movementId: movement.id,
         caregiverId: aggregate?.caregiverId || movement.caregiverId || null,
         year: Number(aggregate?.year || movement.year || 0) || 0,
         month: Number(aggregate?.month || movement.month || 0) || 0,
@@ -2766,9 +2775,16 @@ app.delete('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(
       ...scoped.cobros,
       ...scoped.pagos,
     ])
-    const details = dedupeExtraHoursDetails(
+    const originMovement = allMovements.find((movement) => movement.id === originContext.movementId) || null
+    const canonicalDetails = dedupeExtraHoursDetails(
       readExtraHoursDetailsFromMovement(canonical, new Date())
     )
+    const sourceDetails = dedupeExtraHoursDetails(
+      readExtraHoursDetailsFromMovement(originMovement, new Date())
+    )
+    const details = canonicalDetails.some((detailItem) => String(detailItem.id) === entryId)
+      ? canonicalDetails
+      : sourceDetails
     const remainingDetails = details.filter((detailItem) => String(detailItem.id) !== entryId)
     if (remainingDetails.length === details.length) {
       const error = new Error('Registro de horas extra no encontrado.')
