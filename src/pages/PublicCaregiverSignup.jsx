@@ -92,7 +92,6 @@ export function PublicCaregiverSignup() {
     especialidades: '',
     disponibilidadDias: [],
     disponibilidadTurnos: [],
-    tarifaReferencia: '',
     bio: '',
     cvNombre: '',
     cvMimeType: '',
@@ -154,7 +153,6 @@ export function PublicCaregiverSignup() {
           .filter(Boolean),
         disponibilidadDias: form.disponibilidadDias,
         disponibilidadTurnos: form.disponibilidadTurnos,
-        tarifaReferencia: form.tarifaReferencia || null,
         bio: form.bio || null,
         cvNombre: form.cvNombre || null,
         cvMimeType: form.cvMimeType || null,
@@ -299,26 +297,14 @@ export function PublicCaregiverSignup() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm text-slate-700 font-medium">Especialidades (opcional)</label>
-              <input
-                className={baseInputClass}
-                placeholder="Ej: geriatría, movilización, diabetes"
-                value={form.especialidades}
-                onChange={(e) => setForm((p) => ({ ...p, especialidades: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-sm text-slate-700 font-medium">Tarifa de referencia (opcional)</label>
-              <input
-                type="number"
-                min="0"
-                className={baseInputClass}
-                value={form.tarifaReferencia}
-                onChange={(e) => setForm((p) => ({ ...p, tarifaReferencia: e.target.value }))}
-              />
-            </div>
+          <div>
+            <label className="text-sm text-slate-700 font-medium">Especialidades (opcional)</label>
+            <input
+              className={baseInputClass}
+              placeholder="Ej: geriatría, movilización, diabetes"
+              value={form.especialidades}
+              onChange={(e) => setForm((p) => ({ ...p, especialidades: e.target.value }))}
+            />
           </div>
 
           <div>
