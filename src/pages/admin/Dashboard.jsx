@@ -706,7 +706,8 @@ export function AdminDashboard() {
   ), [finanzasMovimientos, isDashboardMovementInRange]);
   const cajaDisponible = calcularDashboardAcumulado('cobro')
     - calcularDashboardAcumulado('pago')
-    - calcularDashboardAcumulado('retiro');
+    - calcularDashboardAcumulado('retiro')
+    - calcularDashboardAcumulado('gasto');
   const resumenFinanzasCards = [
     {
       key: 'caja',

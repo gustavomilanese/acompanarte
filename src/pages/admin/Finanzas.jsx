@@ -13,7 +13,18 @@ const COBRADORES = ['Gustavo', 'Marina'];
 const TAB_COBROS = 'cobros';
 const TAB_PAGOS = 'pagos';
 const TAB_RETIROS = 'retiros';
+const TAB_GASTOS = 'gastos';
 const DEFAULT_RANGE_START = '2026-01';
+const GASTO_CATEGORIAS = [
+  { value: 'cafeteria', label: 'Cafeteria' },
+  { value: 'telefonia', label: 'Telefonia' },
+  { value: 'equipamiento', label: 'Equipamiento' },
+  { value: 'insumos', label: 'Insumos' },
+  { value: 'movilidad', label: 'Movilidad' },
+  { value: 'suscripciones', label: 'Suscripciones' },
+  { value: 'servicios', label: 'Servicios' },
+  { value: 'otros', label: 'Otros' },
+];
 
 const TAB_META = {
   [TAB_COBROS]: {
@@ -40,6 +51,14 @@ const TAB_META = {
     completedLabel: 'Retirado',
     buttonClass: 'bg-rose-600 text-white border-rose-600',
   },
+  [TAB_GASTOS]: {
+    tipo: 'gasto',
+    label: 'Gastos',
+    listTitle: 'Lista de gastos',
+    createLabel: 'Nuevo gasto',
+    completedLabel: 'Pagado',
+    buttonClass: 'bg-amber-600 text-white border-amber-600',
+  },
 };
 
 const SUMMARY_CARD_STYLES = {
@@ -64,6 +83,13 @@ const SUMMARY_CARD_STYLES = {
     value: 'text-rose-950',
     hint: 'text-rose-700/70',
   },
+  [TAB_GASTOS]: {
+    card: 'h-full border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-white shadow-sm hover:border-amber-300',
+    pill: 'border-amber-200 bg-white/90 text-amber-700',
+    dot: 'bg-amber-400',
+    value: 'text-amber-950',
+    hint: 'text-amber-700/70',
+  },
   caja: {
     card: 'h-full border border-teal-200/80 bg-gradient-to-br from-teal-50 via-white to-white shadow-sm hover:border-teal-300',
     pill: 'border-teal-200 bg-white/90 text-teal-700',
@@ -78,10 +104,15 @@ const SUMMARY_RANGE_INPUT_CLASS = 'w-full border-0 border-b border-slate-200 bg-
 const getCompletedEstado = (tipo) => {
   if (tipo === 'cobro') return 'cobrado';
   if (tipo === 'pago') return 'pagado';
+  if (tipo === 'gasto') return 'pagado';
   return 'retirado';
 };
 
-const getDefaultCategoria = (tipo) => (tipo === 'retiro' ? 'retiro de socios' : 'mensualidad');
+const getDefaultCategoria = (tipo) => {
+  if (tipo === 'retiro') return 'retiro de socios';
+  if (tipo === 'gasto') return 'otros';
+  return 'mensualidad';
+};
 
 export function Finanzas() {
   const navigate = useNavigate();
@@ -106,6 +137,8 @@ export function Finanzas() {
   const [rangoPagosHasta, setRangoPagosHasta] = useState(currentMonthValue);
   const [rangoRetirosDesde, setRangoRetirosDesde] = useState(DEFAULT_RANGE_START);
   const [rangoRetirosHasta, setRangoRetirosHasta] = useState(currentMonthValue);
+  const [rangoGastosDesde, setRangoGastosDesde] = useState(DEFAULT_RANGE_START);
+  const [rangoGastosHasta, setRangoGastosHasta] = useState(currentMonthValue);
   const [rangoCajaDesde, setRangoCajaDesde] = useState(DEFAULT_RANGE_START);
   const [rangoCajaHasta, setRangoCajaHasta] = useState(currentMonthValue);
 
@@ -247,7 +280,7 @@ export function Finanzas() {
       mode: 'create',
       movementId: '',
       tipo: tipoNuevo,
-      serviceId: tipoNuevo === 'retiro' ? '' : (serviceDefault?.id || ''),
+      serviceId: ['retiro', 'gasto'].includes(tipoNuevo) ? '' : (serviceDefault?.id || ''),
       patientId: tipoNuevo === 'cobro' ? (serviceDefault?.pacienteId || '') : '',
       caregiverId: tipoNuevo === 'pago' ? serviceDefaultCaregiver : '',
       monto: '',
@@ -446,11 +479,17 @@ export function Finanzas() {
     [movimientosTotales, rangoRetirosDesde, rangoRetirosHasta]
   );
 
+  const gastosAcumulado = useMemo(
+    () => calcularAcumulado('gasto', rangoGastosDesde, rangoGastosHasta),
+    [movimientosTotales, rangoGastosDesde, rangoGastosHasta]
+  );
+
   const cajaDisponible = useMemo(
     () => (
       calcularAcumulado('cobro', rangoCajaDesde, rangoCajaHasta) -
       calcularAcumulado('pago', rangoCajaDesde, rangoCajaHasta) -
-      calcularAcumulado('retiro', rangoCajaDesde, rangoCajaHasta)
+      calcularAcumulado('retiro', rangoCajaDesde, rangoCajaHasta) -
+      calcularAcumulado('gasto', rangoCajaDesde, rangoCajaHasta)
     ),
     [movimientosTotales, rangoCajaDesde, rangoCajaHasta]
   );
@@ -470,6 +509,9 @@ export function Finanzas() {
     }
     if (m.tipo === 'retiro') {
       return m.notas?.trim() || 'Retiro de socios';
+    }
+    if (m.tipo === 'gasto') {
+      return m.notas?.trim() || m.categoria || 'Gasto';
     }
     return m.caregiver?.nombre || 'Cuidador no asignado';
   };
@@ -533,7 +575,7 @@ export function Finanzas() {
             </button>
             <div>
               <h1 className="text-xl font-bold text-dark">Modulo de finanzas</h1>
-              <p className="text-sm text-slate-500">Cobros, pagos y retiros</p>
+              <p className="text-sm text-slate-500">Cobros, pagos, retiros y gastos</p>
             </div>
           </div>
           <AdminQuickMenu />
@@ -541,7 +583,7 @@ export function Finanzas() {
       </header>
 
       <div className="p-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
           <Card
             hover
             onClick={() => handleResumenCardClick(TAB_COBROS)}
@@ -663,6 +705,39 @@ export function Finanzas() {
           </Card>
           <Card
             hover
+            onClick={() => handleResumenCardClick(TAB_GASTOS)}
+            className={SUMMARY_CARD_STYLES[TAB_GASTOS].card}
+          >
+            <CardContent className="flex h-full flex-col">
+              <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${SUMMARY_CARD_STYLES[TAB_GASTOS].pill}`}>
+                <span className={`h-2 w-2 rounded-full ${SUMMARY_CARD_STYLES[TAB_GASTOS].dot}`} />
+                <p className="text-xs font-medium">Gastos acumulados</p>
+              </div>
+              <p className={`mt-3 text-2xl font-bold ${SUMMARY_CARD_STYLES[TAB_GASTOS].value}`}>${Number(gastosAcumulado || 0).toLocaleString('es-AR')}</p>
+              <div className="mt-auto grid grid-cols-2 gap-3 pt-3" onClick={stopCardNavigation}>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Desde</span>
+                  <input
+                    type="month"
+                    value={rangoGastosDesde}
+                    onChange={(e) => setRangoGastosDesde(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-400">Hasta</span>
+                  <input
+                    type="month"
+                    value={rangoGastosHasta}
+                    onChange={(e) => setRangoGastosHasta(e.target.value)}
+                    className={SUMMARY_RANGE_INPUT_CLASS}
+                  />
+                </label>
+              </div>
+            </CardContent>
+          </Card>
+          <Card
+            hover
             onClick={() => handleResumenCardClick(null, 'todos')}
             className={SUMMARY_CARD_STYLES.caja.card}
           >
@@ -672,7 +747,7 @@ export function Finanzas() {
                 <p className="text-xs font-medium">Caja disponible</p>
               </div>
               <p className={`mt-3 text-2xl font-bold ${SUMMARY_CARD_STYLES.caja.value}`}>${Number(cajaDisponible || 0).toLocaleString('es-AR')}</p>
-              <p className={`mt-2 text-xs ${SUMMARY_CARD_STYLES.caja.hint}`}>Cobrado - pagado - retirado</p>
+              <p className={`mt-2 text-xs ${SUMMARY_CARD_STYLES.caja.hint}`}>Cobrado - pagado - retirado - gastos</p>
               <div className="mt-auto grid grid-cols-2 gap-3 pt-3" onClick={stopCardNavigation}>
                 <label className="flex flex-col gap-0.5">
                   <span className="text-[10px] text-slate-400">Desde</span>
@@ -819,7 +894,7 @@ export function Finanzas() {
         size="md"
       >
         <form onSubmit={submitRegistroModal} className="space-y-3">
-          {registroModal.serviceId && registroModal.tipo !== 'retiro' && (
+          {registroModal.serviceId && !['retiro', 'gasto'].includes(registroModal.tipo) && (
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
               Vinculado a servicio: {servicios.find((s) => s.id === registroModal.serviceId)?.paciente?.nombre || registroModal.serviceId}
             </div>
@@ -912,6 +987,26 @@ export function Finanzas() {
             required
           />
 
+          {registroModal.tipo === 'gasto' ? (
+            <select
+              value={registroModal.categoria}
+              onChange={(e) => setRegistroModal((prev) => ({ ...prev, categoria: e.target.value }))}
+              className="w-full px-3 py-2 border-2 border-light-300 rounded-xl"
+            >
+              {GASTO_CATEGORIAS.map((categoria) => (
+                <option key={categoria.value} value={categoria.value}>{categoria.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={registroModal.categoria}
+              onChange={(e) => setRegistroModal((prev) => ({ ...prev, categoria: e.target.value }))}
+              className="w-full px-3 py-2 border-2 border-light-300 rounded-xl"
+              placeholder="Categoria"
+            />
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <select
               value={registroModal.metodo}
@@ -947,7 +1042,11 @@ export function Finanzas() {
             className="w-full px-3 py-2 border-2 border-light-300 rounded-xl"
           >
             <option value={getCompletedEstado(registroModal.tipo)}>
-              {registroModal.tipo === 'cobro' ? 'Cobrado' : registroModal.tipo === 'pago' ? 'Pagado' : 'Retirado'}
+              {registroModal.tipo === 'cobro'
+                ? 'Cobrado'
+                : registroModal.tipo === 'pago' || registroModal.tipo === 'gasto'
+                  ? 'Pagado'
+                  : 'Retirado'}
             </option>
             <option value="pendiente">Pendiente</option>
           </select>

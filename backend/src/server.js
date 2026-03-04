@@ -1618,7 +1618,7 @@ app.get('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
   const week = req.query?.week ? Number(req.query.week) : null
 
   const where = {}
-  if (tipo && ['cobro', 'pago', 'retiro'].includes(String(tipo))) where.tipo = String(tipo)
+  if (tipo && ['cobro', 'pago', 'retiro', 'gasto'].includes(String(tipo))) where.tipo = String(tipo)
   if (periodType && ['month', 'week'].includes(String(periodType))) where.periodType = String(periodType)
   if (year) where.year = year
   if (month) where.month = month
@@ -1639,8 +1639,8 @@ app.get('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
 app.post('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
   requireFields(req.body, ['tipo', 'metodo', 'monto'])
   const tipo = String(req.body.tipo)
-  if (!['cobro', 'pago', 'retiro'].includes(tipo)) {
-    const error = new Error('Tipo inválido. Debe ser cobro, pago o retiro.')
+  if (!['cobro', 'pago', 'retiro', 'gasto'].includes(tipo)) {
+    const error = new Error('Tipo inválido. Debe ser cobro, pago, retiro o gasto.')
     error.status = 400
     throw error
   }
@@ -1868,6 +1868,9 @@ app.get('/api/admin/finanzas/resumen', asyncHandler(async (_req, res) => {
   const totalAdelantosMes = movementsCurrentMonth
     .filter((m) => m.tipo === 'pago' && m.categoria === 'adelanto')
     .reduce((acc, m) => acc + Number(m.monto || 0), 0)
+  const totalGastosMes = movementsCurrentMonth
+    .filter((m) => m.tipo === 'gasto' && String(m.estado).toLowerCase() !== 'pendiente')
+    .reduce((acc, m) => acc + Number(m.monto || 0), 0)
 
   res.json({
     period: { year, month },
@@ -1878,6 +1881,7 @@ app.get('/api/admin/finanzas/resumen', asyncHandler(async (_req, res) => {
     totalCobradoMes,
     totalPagadoMes,
     totalAdelantosMes,
+    totalGastosMes,
     pacientesConDeuda: [...debtByPatient.values()],
     cuidadoresPendientePago: caregiversPendingWithAdvance,
   })
