@@ -510,23 +510,66 @@ export function Servicios() {
   }, [extraHoursMonthFilter, extraHoursPeriodOptions]);
 
   const extraHoursDetailRows = useMemo(() => {
+    const fallbackAssignedCaregiver = cuidadoresAsignadosEnServicio.length === 1
+      ? cuidadoresAsignadosEnServicio[0]
+      : null;
+
     return extraHoursVisible
       .flatMap((group) => {
         const year = Number(group.info.year || 0);
         const month = Number(group.info.month || 0);
-        const caregiverId = group.info.caregiverId || group.pago?.caregiverId || group.cobro?.caregiverId || '';
-        const caregiverNombre = group.info.caregiverNombre || group.pago?.caregiver?.nombre || group.cobro?.caregiver?.nombre || 'Sin cuidador';
+        const caregiverId = group.info.caregiverId
+          || group.pago?.caregiverId
+          || group.cobro?.caregiverId
+          || fallbackAssignedCaregiver?.id
+          || '';
+        const caregiverNombre = group.info.caregiverNombre
+          || group.pago?.caregiver?.nombre
+          || group.cobro?.caregiver?.nombre
+          || fallbackAssignedCaregiver?.nombre
+          || 'Sin cuidador';
+        const details = Array.isArray(group.info.details) ? group.info.details : [];
+        const groupTotalHoras = Number(group.info.totalHoras || 0)
+          || details.reduce((acc, detail) => acc + (Number.isFinite(Number(detail?.horas)) ? Number(detail.horas) : 0), 0);
+        const groupCobroTotal = Number(group.cobro?.monto || 0);
+        const groupPagoTotal = Number(group.pago?.monto || 0);
+        const detailCobroTotal = details.reduce((acc, detail) => acc + Number(detail?.montoCobro || 0), 0);
+        const detailPagoTotal = details.reduce((acc, detail) => acc + Number(detail?.montoPago || 0), 0);
 
-        return (group.info.details || []).map((detail) => {
+        return details.map((detail, idx) => {
           const horas = Number.isFinite(Number(detail.horas)) ? Number(detail.horas) : 0;
           const valorHoraCobro = Number.isFinite(Number(detail.valorHoraCobro)) ? Number(detail.valorHoraCobro) : null;
           const valorHoraPago = Number.isFinite(Number(detail.valorHoraPago)) ? Number(detail.valorHoraPago) : null;
-          const montoCobro = valorHoraCobro !== null
+          let montoCobro = valorHoraCobro !== null
             ? roundMoney(horas * valorHoraCobro)
             : roundMoney(detail.montoCobro || 0);
-          const montoPago = valorHoraPago !== null
+          let montoPago = valorHoraPago !== null
             ? roundMoney(horas * valorHoraPago)
             : roundMoney(detail.montoPago || 0);
+
+          if (montoCobro <= 0 && groupCobroTotal > 0) {
+            if (detailCobroTotal > 0 && Number(detail.montoCobro || 0) > 0) {
+              montoCobro = roundMoney(groupCobroTotal * (Number(detail.montoCobro || 0) / detailCobroTotal));
+            } else if (groupTotalHoras > 0 && horas > 0) {
+              montoCobro = roundMoney(groupCobroTotal * (horas / groupTotalHoras));
+            } else if (details.length === 1 || idx === 0) {
+              montoCobro = roundMoney(groupCobroTotal);
+            }
+          }
+
+          if (montoPago <= 0 && groupPagoTotal > 0) {
+            if (detailPagoTotal > 0 && Number(detail.montoPago || 0) > 0) {
+              montoPago = roundMoney(groupPagoTotal * (Number(detail.montoPago || 0) / detailPagoTotal));
+            } else if (groupTotalHoras > 0 && horas > 0) {
+              montoPago = roundMoney(groupPagoTotal * (horas / groupTotalHoras));
+            } else if (details.length === 1 || idx === 0) {
+              montoPago = roundMoney(groupPagoTotal);
+            }
+          }
+
+          const precio = valorHoraCobro !== null && valorHoraCobro > 0
+            ? roundMoney(valorHoraCobro)
+            : (horas > 0 ? roundMoney(montoCobro / horas) : roundMoney(montoCobro || 0));
 
           return {
             id: String(detail.id),
@@ -542,6 +585,7 @@ export function Servicios() {
             valorHoraPago,
             montoCobro,
             montoPago,
+            precio,
             concepto: detail.concepto || '',
             createdAt: detail.createdAt || null,
             cobroEstado: String(group.cobro?.estado || 'pendiente').toLowerCase(),
@@ -556,47 +600,7 @@ export function Servicios() {
         const bDate = new Date(b.fecha || b.createdAt || 0).getTime();
         return bDate - aDate;
       });
-  }, [extraHoursVisible]);
-
-  const extraHoursAccumulatedRows = useMemo(() => {
-    const grouped = new Map();
-    for (const row of extraHoursDetailRows) {
-      const key = `${row.caregiverId || 'sin-cuidador'}:${row.periodValue}`;
-      const existing = grouped.get(key) || {
-        key,
-        caregiverId: row.caregiverId || '',
-        caregiverNombre: row.caregiverNombre || 'Sin cuidador',
-        year: row.year || 0,
-        month: row.month || 0,
-        periodLabel: row.periodLabel || '-',
-        horas: 0,
-        montoCobro: 0,
-        montoPago: 0,
-        registros: 0,
-        cobroEstado: 'pagado',
-        pagoEstado: 'pagado',
-      };
-      existing.horas += Number(row.horas || 0);
-      existing.montoCobro += Number(row.montoCobro || 0);
-      existing.montoPago += Number(row.montoPago || 0);
-      existing.registros += 1;
-      if (row.cobroEstado === 'pendiente') existing.cobroEstado = 'pendiente';
-      if (row.pagoEstado === 'pendiente') existing.pagoEstado = 'pendiente';
-      grouped.set(key, existing);
-    }
-    return [...grouped.values()]
-      .map((item) => ({
-        ...item,
-        horas: roundMoney(item.horas),
-        montoCobro: roundMoney(item.montoCobro),
-        montoPago: roundMoney(item.montoPago),
-      }))
-      .sort((a, b) => {
-        if (a.year !== b.year) return b.year - a.year;
-        if (a.month !== b.month) return b.month - a.month;
-        return a.caregiverNombre.localeCompare(b.caregiverNombre, 'es');
-      });
-  }, [extraHoursDetailRows]);
+  }, [extraHoursVisible, cuidadoresAsignadosEnServicio]);
 
   const extraHoursPreview = useMemo(() => {
     const horas = Number(extraHoursForm.horas);
@@ -646,13 +650,18 @@ export function Servicios() {
   );
 
   const extraHoursQuickStats = useMemo(() => {
-    return extraHoursDetailRows.reduce((acc, row) => ({
-      horas: acc.horas + Number(row.horas || 0),
-      cobro: acc.cobro + Number(row.montoCobro || 0),
-      pago: acc.pago + Number(row.montoPago || 0),
-      rows: acc.rows + 1,
-    }), { horas: 0, cobro: 0, pago: 0, rows: 0 });
-  }, [extraHoursDetailRows]);
+    return extraHoursVisible.reduce((acc, item) => {
+      const detailHours = (item.info.details || []).reduce((sum, detail) => (
+        sum + (Number.isFinite(Number(detail?.horas)) ? Number(detail.horas) : 0)
+      ), 0);
+      return {
+        horas: acc.horas + Number(item.info.totalHoras || detailHours || 0),
+        cobro: acc.cobro + Number(item.cobro?.monto || 0),
+        pago: acc.pago + Number(item.pago?.monto || 0),
+        rows: acc.rows + Math.max(1, (item.info.details || []).length),
+      };
+    }, { horas: 0, cobro: 0, pago: 0, rows: 0 });
+  }, [extraHoursVisible]);
 
   const refreshAll = async () => {
     await loadData();
@@ -1282,38 +1291,6 @@ export function Servicios() {
                         </form>
                       )}
 
-                      <div className="rounded-xl border border-amber-100 overflow-hidden bg-white mb-4">
-                        <table className="w-full text-sm">
-                          <thead className="bg-amber-50">
-                            <tr className="text-left text-slate-600">
-                              <th className="px-3 py-2 font-semibold">Período</th>
-                              <th className="px-3 py-2 font-semibold">Cuidador</th>
-                              <th className="px-3 py-2 font-semibold">Horas acumuladas</th>
-                              <th className="px-3 py-2 font-semibold">Cobro pendiente</th>
-                              <th className="px-3 py-2 font-semibold">Pago pendiente</th>
-                              <th className="px-3 py-2 font-semibold">Registros</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {extraHoursAccumulatedRows.length === 0 && (
-                              <tr>
-                                <td colSpan={6} className="px-3 py-4 text-center text-slate-500">Sin acumulados en el período seleccionado.</td>
-                              </tr>
-                            )}
-                            {extraHoursAccumulatedRows.map((row) => (
-                              <tr key={row.key} className="border-t border-amber-100">
-                                <td className="px-3 py-2 text-slate-600">{row.periodLabel}</td>
-                                <td className="px-3 py-2 text-slate-600">{row.caregiverNombre}</td>
-                                <td className="px-3 py-2 text-slate-700">{Number(row.horas || 0).toLocaleString('es-AR')} hs</td>
-                                <td className="px-3 py-2 text-slate-700">${Number(row.montoCobro || 0).toLocaleString('es-AR')}</td>
-                                <td className="px-3 py-2 text-slate-700">${Number(row.montoPago || 0).toLocaleString('es-AR')}</td>
-                                <td className="px-3 py-2 text-slate-600">{row.registros}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-xs text-slate-500">Registros cargados (uno por uno).</p>
                         <button
@@ -1326,7 +1303,7 @@ export function Servicios() {
                       </div>
 
                       <div className="rounded-xl border border-amber-100 overflow-x-auto bg-white mb-5">
-                        <table className="w-full text-sm min-w-[980px]">
+                        <table className="w-full text-sm min-w-[780px]">
                           <thead className="bg-amber-50">
                             <tr className="text-left text-slate-600">
                               <th className="px-3 py-2 font-semibold">
@@ -1349,12 +1326,7 @@ export function Servicios() {
                               <th className="px-3 py-2 font-semibold">Cuidador</th>
                               <th className="px-3 py-2 font-semibold">Fecha</th>
                               <th className="px-3 py-2 font-semibold">Horas</th>
-                              <th className="px-3 py-2 font-semibold">Valor hora cobro</th>
-                              <th className="px-3 py-2 font-semibold">Costo hora pago</th>
-                              <th className="px-3 py-2 font-semibold">Cobro pendiente</th>
-                              <th className="px-3 py-2 font-semibold">Pago pendiente</th>
-                              <th className="px-3 py-2 font-semibold">Estado cobro</th>
-                              <th className="px-3 py-2 font-semibold">Estado pago</th>
+                              <th className="px-3 py-2 font-semibold">Precio</th>
                               <th className="px-3 py-2 font-semibold">Concepto</th>
                               <th className="px-3 py-2 font-semibold text-right">Acciones</th>
                             </tr>
@@ -1362,7 +1334,7 @@ export function Servicios() {
                           <tbody>
                             {extraHoursDetailRows.length === 0 && (
                               <tr>
-                                <td colSpan={12} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
+                                <td colSpan={7} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
                               </tr>
                             )}
                             {extraHoursDetailRows.map((row) => (
@@ -1373,20 +1345,7 @@ export function Servicios() {
                                   {row.fecha ? format(new Date(row.fecha), 'dd/MM/yyyy') : '-'}
                                 </td>
                                 <td className="px-3 py-2 text-slate-700">{Number(row.horas || 0).toLocaleString('es-AR')} hs</td>
-                                <td className="px-3 py-2 text-slate-600">
-                                  {row.valorHoraCobro !== null ? `$${Number(row.valorHoraCobro).toLocaleString('es-AR')}` : '-'}
-                                </td>
-                                <td className="px-3 py-2 text-slate-600">
-                                  {row.valorHoraPago !== null ? `$${Number(row.valorHoraPago).toLocaleString('es-AR')}` : '-'}
-                                </td>
-                                <td className="px-3 py-2 text-slate-700">${Number(row.montoCobro || 0).toLocaleString('es-AR')}</td>
-                                <td className="px-3 py-2 text-slate-700">${Number(row.montoPago || 0).toLocaleString('es-AR')}</td>
-                                <td className={`px-3 py-2 text-xs font-medium ${row.cobroEstado === 'pagado' ? 'text-emerald-700' : 'text-amber-700'}`}>
-                                  {row.cobroEstado === 'pagado' ? 'Pagado' : 'Pendiente'}
-                                </td>
-                                <td className={`px-3 py-2 text-xs font-medium ${row.pagoEstado === 'pagado' ? 'text-emerald-700' : 'text-amber-700'}`}>
-                                  {row.pagoEstado === 'pagado' ? 'Pagado' : 'Pendiente'}
-                                </td>
+                                <td className="px-3 py-2 text-slate-700">${Number(row.precio || 0).toLocaleString('es-AR')}</td>
                                 <td className="px-3 py-2 text-slate-600">{row.concepto || '-'}</td>
                                 <td className="px-3 py-2">
                                   <div className="flex items-center justify-end gap-1">
