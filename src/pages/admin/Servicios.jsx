@@ -21,8 +21,8 @@ const STATUS_LABEL = {
   no_pago: 'No pago mes actual',
 };
 
-const METODOS_PAGO = ['transferencia', 'mercado_pago', 'efectivo', 'electronica'];
 const EXTRA_HOURS_CATEGORY = 'horas_extra';
+const EXTRA_HOURS_AGGREGATE_PREFIX = '[#EXH_AGG:v1]';
 
 function badgeByStatus(status) {
   const by = {
@@ -80,7 +80,80 @@ function operationsPanelByStatus(status) {
   return by[status] || 'border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50';
 }
 
+function decodeBase64ToText(base64Text) {
+  const normalized = String(base64Text || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function parseExtraHoursAggregateNotes(notes) {
+  const raw = String(notes || '').trim();
+  if (!raw) return null;
+  const markerIndex = raw.indexOf(EXTRA_HOURS_AGGREGATE_PREFIX);
+  if (markerIndex < 0) return null;
+  const encoded = raw.slice(markerIndex + EXTRA_HOURS_AGGREGATE_PREFIX.length).trim();
+  if (!encoded) return null;
+
+  try {
+    const decoded = decodeBase64ToText(encoded);
+    const payload = JSON.parse(decoded);
+    if (!payload || payload.kind !== 'extra_hours_aggregate') return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeExtraHoursDetails(details) {
+  if (!Array.isArray(details)) return [];
+  return details
+    .map((item, idx) => {
+      if (!item || typeof item !== 'object') return null;
+      const horas = Number(item.horas);
+      const montoCobro = Number(item.montoCobro);
+      const montoPago = Number(item.montoPago);
+      const fechaValue = item.fecha ? new Date(item.fecha) : null;
+      const fecha = fechaValue && !Number.isNaN(fechaValue.getTime())
+        ? fechaValue.toISOString().slice(0, 10)
+        : null;
+      return {
+        id: String(item.id || `det-${idx + 1}`),
+        fecha,
+        horas: Number.isFinite(horas) ? horas : null,
+        montoCobro: Number.isFinite(montoCobro) ? montoCobro : 0,
+        montoPago: Number.isFinite(montoPago) ? montoPago : 0,
+        concepto: String(item.concepto || '').trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
 function parseExtraHoursInfo(mov) {
+  const aggregate = parseExtraHoursAggregateNotes(mov?.notas);
+  if (aggregate) {
+    const details = normalizeExtraHoursDetails(aggregate.detalles);
+    const totalHoras = details.reduce((acc, item) => acc + (Number.isFinite(item.horas) ? Number(item.horas) : 0), 0);
+    const month = Number(aggregate.month || mov?.month || 0) || null;
+    const year = Number(aggregate.year || mov?.year || 0) || null;
+    const caregiverId = aggregate.caregiverId || mov?.caregiverId || null;
+    const caregiverNombre = aggregate.caregiverNombre || mov?.caregiver?.nombre || null;
+
+    return {
+      isAggregate: true,
+      aggregate,
+      key: `${caregiverId || 'sin-cuidador'}:${year || 0}:${month || 0}`,
+      caregiverId,
+      caregiverNombre,
+      year,
+      month,
+      totalHoras,
+      details,
+      lastDetail: details[details.length - 1] || null,
+    };
+  }
+
   const raw = String(mov?.notas || '').trim();
   const refMatch = raw.match(/\[#EXH:([^\]]+)\]/i);
   const match = raw.match(/horas?\s+extra:\s*([\d.,]+)\s*hs?/i) || raw.match(/([\d.,]+)\s*hs?\s*extra/i);
@@ -90,7 +163,18 @@ function parseExtraHoursInfo(mov) {
   if (match || genericMatch) {
     detail = detail.replace((match || genericMatch)[0], '').replace(/^[·:,\-\s]+/, '').trim();
   }
-  return { ref: refMatch?.[1] || null, hours, detail };
+  return {
+    isAggregate: false,
+    ref: refMatch?.[1] || null,
+    key: refMatch?.[1] ? `ref:${refMatch[1]}` : `${mov?.id || 'legacy'}:${mov?.createdAt || mov?.fecha || ''}`,
+    caregiverId: mov?.caregiverId || null,
+    caregiverNombre: mov?.caregiver?.nombre || null,
+    year: Number(mov?.year || 0) || null,
+    month: Number(mov?.month || 0) || null,
+    totalHoras: Number.isFinite(hours) ? hours : 0,
+    details: [],
+    lastDetail: detail ? { concepto: detail } : null,
+  };
 }
 
 export function Servicios() {
@@ -109,25 +193,13 @@ export function Servicios() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState(null);
   const [roleDraft, setRoleDraft] = useState('');
-  const [paymentEditorOpen, setPaymentEditorOpen] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({
-    periodType: 'month',
-    year: new Date().getFullYear(),
-    month: new Date().getMonth() + 1,
-    week: '',
-    estado: 'pendiente',
-    monto: '',
-    metodo: 'transferencia',
-    fechaPago: '',
-    notas: '',
-  });
   const [extraHoursEditorOpen, setExtraHoursEditorOpen] = useState(false);
   const [extraHoursForm, setExtraHoursForm] = useState({
     fecha: new Date().toISOString().slice(0, 10),
     caregiverId: '',
     horas: '',
-    montoCobro: '',
-    montoPago: '',
+    valorHoraCobro: '',
+    valorHoraPago: '',
     notas: '',
   });
   const [assignmentForm, setAssignmentForm] = useState({
@@ -138,6 +210,8 @@ export function Servicios() {
   });
   const [assignmentModalOpen, setAssignmentModalOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [pendingDetailType, setPendingDetailType] = useState('');
+  const [extraHoursExpandedKey, setExtraHoursExpandedKey] = useState('');
 
   const cuidadoresAsignadosEnServicio = useMemo(() => {
     if (!selectedDetail) return [];
@@ -206,6 +280,8 @@ export function Servicios() {
 
   useEffect(() => {
     setActionsMenuOpen(false);
+    setPendingDetailType('');
+    setExtraHoursExpandedKey('');
   }, [selectedId]);
 
   useEffect(() => {
@@ -224,32 +300,42 @@ export function Servicios() {
     return servicios.filter((s) => s.estado === statusFilter);
   }, [servicios, statusFilter]);
 
-  const pagosServicio = useMemo(() => {
-    if (!selectedDetail) return [];
-    return movimientosFinanzas
-      .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id && m.categoria !== EXTRA_HOURS_CATEGORY)
-      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-  }, [selectedDetail, movimientosFinanzas]);
-
   const extraHoursServicio = useMemo(() => {
     if (!selectedDetail) return [];
-    const extraCobros = movimientosFinanzas
+    const extraCobrosByKey = new Map();
+    movimientosFinanzas
       .filter((m) => m.tipo === 'cobro' && m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
-      .map((mov) => ({ ...mov, extraInfo: parseExtraHoursInfo(mov) }));
+      .forEach((mov) => {
+        const extraInfo = parseExtraHoursInfo(mov);
+        const pairKey = extraInfo.key;
+        if (!pairKey) return;
+        const prev = extraCobrosByKey.get(pairKey);
+        if (!prev) {
+          extraCobrosByKey.set(pairKey, { ...mov, extraInfo, pairKey });
+          return;
+        }
+        const prevDate = new Date(prev.updatedAt || prev.createdAt || prev.fecha || 0).getTime();
+        const nextDate = new Date(mov.updatedAt || mov.createdAt || mov.fecha || 0).getTime();
+        if (nextDate >= prevDate) {
+          extraCobrosByKey.set(pairKey, { ...mov, extraInfo, pairKey });
+        }
+      });
+    const extraCobros = [...extraCobrosByKey.values()];
 
     const pagosByRef = new Map();
     movimientosFinanzas
       .filter((m) => m.tipo === 'pago' && m.serviceId === selectedDetail.id && m.categoria === EXTRA_HOURS_CATEGORY)
       .forEach((mov) => {
         const info = parseExtraHoursInfo(mov);
-        if (info.ref) pagosByRef.set(info.ref, { ...mov, extraInfo: info });
+        const key = info.key || (info.ref ? `ref:${info.ref}` : null);
+        if (key) pagosByRef.set(key, { ...mov, extraInfo: info });
       });
 
     return extraCobros
       .map((cobro) => {
-        const pairedPago = cobro.extraInfo.ref ? pagosByRef.get(cobro.extraInfo.ref) : null;
+        const pairedPago = pagosByRef.get(cobro.pairKey) || null;
         return {
-          ref: cobro.extraInfo.ref || cobro.id,
+          ref: cobro.pairKey || cobro.id,
           cobro,
           pago: pairedPago || null,
           info: cobro.extraInfo,
@@ -258,23 +344,46 @@ export function Servicios() {
       .sort((a, b) => new Date(b.cobro.fecha || b.cobro.createdAt || 0) - new Date(a.cobro.fecha || a.cobro.createdAt || 0));
   }, [selectedDetail, movimientosFinanzas]);
 
+  const extraHoursPreview = useMemo(() => {
+    const horas = Number(extraHoursForm.horas);
+    const valorHoraCobro = Number(extraHoursForm.valorHoraCobro);
+    const valorHoraPago = Number(extraHoursForm.valorHoraPago);
+    const totalCobro = Number.isFinite(horas) && Number.isFinite(valorHoraCobro) ? horas * valorHoraCobro : 0;
+    const totalPago = Number.isFinite(horas) && Number.isFinite(valorHoraPago) ? horas * valorHoraPago : 0;
+    return {
+      horas: Number.isFinite(horas) ? horas : 0,
+      totalCobro: Number(totalCobro.toFixed(2)),
+      totalPago: Number(totalPago.toFixed(2)),
+    };
+  }, [extraHoursForm.horas, extraHoursForm.valorHoraCobro, extraHoursForm.valorHoraPago]);
+
+  const movimientosServicioPendientes = useMemo(() => {
+    if (!selectedDetail) return { cobros: [], pagos: [] };
+    const isPending = (estado) => String(estado || '').toLowerCase() === 'pendiente';
+    const serviceMovements = movimientosFinanzas.filter((m) => m.serviceId === selectedDetail.id);
+    return {
+      cobros: serviceMovements
+        .filter((m) => m.tipo === 'cobro' && isPending(m.estado))
+        .sort((a, b) => new Date(b.fecha || b.createdAt || 0) - new Date(a.fecha || a.createdAt || 0)),
+      pagos: serviceMovements
+        .filter((m) => m.tipo === 'pago' && isPending(m.estado))
+        .sort((a, b) => new Date(b.fecha || b.createdAt || 0) - new Date(a.fecha || a.createdAt || 0)),
+    };
+  }, [selectedDetail, movimientosFinanzas]);
+
+  const pendientesCobroTotal = useMemo(
+    () => movimientosServicioPendientes.cobros.reduce((acc, mov) => acc + Number(mov.monto || 0), 0),
+    [movimientosServicioPendientes]
+  );
+
+  const pendientesPagoTotal = useMemo(
+    () => movimientosServicioPendientes.pagos.reduce((acc, mov) => acc + Number(mov.monto || 0), 0),
+    [movimientosServicioPendientes]
+  );
+
   const refreshAll = async () => {
     await loadData();
     if (selectedId) await loadDetail(selectedId);
-  };
-
-  const resetPaymentForm = () => {
-    setPaymentForm({
-      periodType: 'month',
-      year: new Date().getFullYear(),
-      month: new Date().getMonth() + 1,
-      week: '',
-      estado: 'pendiente',
-      monto: '',
-      metodo: 'transferencia',
-      fechaPago: '',
-      notas: '',
-    });
   };
 
   const resetExtraHoursForm = () => {
@@ -282,8 +391,8 @@ export function Servicios() {
       fecha: new Date().toISOString().slice(0, 10),
       caregiverId: '',
       horas: '',
-      montoCobro: '',
-      montoPago: '',
+      valorHoraCobro: '',
+      valorHoraPago: '',
       notas: '',
     });
   };
@@ -300,49 +409,6 @@ export function Servicios() {
     return d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
   };
 
-  const submitPaymentPeriod = async (e) => {
-    e.preventDefault();
-    if (!selectedDetail) return;
-    try {
-      if (!paymentForm.year) {
-        showError('Completá el año');
-        return;
-      }
-      if (paymentForm.periodType === 'month' && !paymentForm.month) {
-        showError('Seleccioná el mes');
-        return;
-      }
-      if (paymentForm.periodType === 'week' && !paymentForm.week) {
-        showError('Seleccioná la semana');
-        return;
-      }
-      if (!paymentForm.monto) {
-        showError('Completá el monto');
-        return;
-      }
-      await adminApi.createFinanzasMovimiento({
-        tipo: 'cobro',
-        metodo: paymentForm.metodo,
-        monto: Number(paymentForm.monto),
-        periodType: paymentForm.periodType,
-        year: Number(paymentForm.year),
-        month: paymentForm.periodType === 'month' ? Number(paymentForm.month) : null,
-        week: paymentForm.periodType === 'week' ? Number(paymentForm.week) : null,
-        estado: paymentForm.estado,
-        fechaPago: paymentForm.estado === 'pagado' ? (paymentForm.fechaPago || new Date().toISOString()) : null,
-        notas: paymentForm.notas || null,
-        patientId: selectedDetail.pacienteId,
-        caregiverId: selectedDetail.cuidadorId,
-        serviceId: selectedDetail.id,
-      });
-      showSuccess('Período de cobro agregado');
-      setPaymentEditorOpen(false);
-      resetPaymentForm();
-      await refreshAll();
-    } catch (error) {
-      showError(error.message || 'No se pudo registrar el período');
-    }
-  };
 
   const submitExtraHours = async (e) => {
     e.preventDefault();
@@ -369,12 +435,12 @@ export function Servicios() {
         showError('El cuidador seleccionado no está asignado al servicio');
         return;
       }
-      if (!extraHoursForm.montoCobro) {
-        showError('Completá el monto a cobrar');
+      if (!extraHoursForm.valorHoraCobro) {
+        showError('Completá el valor hora a cobrar');
         return;
       }
-      if (!extraHoursForm.montoPago) {
-        showError('Completá el monto a pagar al cuidador');
+      if (!extraHoursForm.valorHoraPago) {
+        showError('Completá el costo hora a pagar al cuidador');
         return;
       }
 
@@ -382,29 +448,16 @@ export function Servicios() {
         caregiverId: extraHoursForm.caregiverId,
         fecha: `${extraHoursForm.fecha}T12:00:00`,
         horas: Number(extraHoursForm.horas),
-        montoCobro: Number(extraHoursForm.montoCobro),
-        montoPago: Number(extraHoursForm.montoPago),
+        valorHoraCobro: Number(extraHoursForm.valorHoraCobro),
+        valorHoraPago: Number(extraHoursForm.valorHoraPago),
         detalle: extraHoursForm.notas || '',
       });
-      showSuccess('Hora extra registrada: cobro y pago pendientes creados');
+      showSuccess('Hora extra acumulada: se actualizó cobro y pago pendientes del mes');
       setExtraHoursEditorOpen(false);
       resetExtraHoursForm();
       await refreshAll();
     } catch (error) {
       showError(error.message || 'No se pudo registrar la hora extra');
-    }
-  };
-
-  const updatePaymentStatus = async (mov, estado) => {
-    try {
-      await adminApi.updateFinanzasMovimiento(mov.id, {
-        estado,
-        fechaPago: estado === 'pagado' ? (mov.fechaPago || new Date().toISOString()) : null,
-      });
-      showSuccess(estado === 'pagado' ? 'Estado marcado como pagado' : 'Estado marcado como pendiente');
-      await refreshAll();
-    } catch (error) {
-      showError(error.message || 'No se pudo actualizar el estado');
     }
   };
 
@@ -760,7 +813,7 @@ export function Servicios() {
                           </button>
                         ) : null}
                       </div>
-                      <p className="text-xs text-slate-500 mb-3">Cada carga genera automáticamente un cobro pendiente y una orden de pago pendiente.</p>
+                      <p className="text-xs text-slate-500 mb-3">Se acumula por cuidador y mes. El total se calcula como horas x valor hora (cobro) y horas x costo hora (pago).</p>
 
                       {extraHoursEditorOpen && (
                         <form onSubmit={submitExtraHours} className="rounded-xl border border-amber-100 bg-white p-3 mb-3 space-y-2">
@@ -797,10 +850,10 @@ export function Servicios() {
                               type="number"
                               min="0"
                               step="0.01"
-                              value={extraHoursForm.montoCobro}
-                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, montoCobro: e.target.value }))}
+                              value={extraHoursForm.valorHoraCobro}
+                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, valorHoraCobro: e.target.value }))}
                               className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                              placeholder="Monto a cobrar"
+                              placeholder="Valor hora a cobrar"
                               required
                             />
                           </div>
@@ -809,10 +862,10 @@ export function Servicios() {
                               type="number"
                               min="0"
                               step="0.01"
-                              value={extraHoursForm.montoPago}
-                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, montoPago: e.target.value }))}
+                              value={extraHoursForm.valorHoraPago}
+                              onChange={(e) => setExtraHoursForm((prev) => ({ ...prev, valorHoraPago: e.target.value }))}
                               className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                              placeholder="Monto a pagar al cuidador"
+                              placeholder="Costo hora a pagar"
                               required
                             />
                             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
@@ -827,6 +880,14 @@ export function Servicios() {
                               </Button>
                             </div>
                           </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div className="px-3 py-2 rounded-lg border border-emerald-100 bg-emerald-50 text-xs text-emerald-700">
+                              Total a cobrar: <span className="font-semibold">${Number(extraHoursPreview.totalCobro || 0).toLocaleString('es-AR')}</span>
+                            </div>
+                            <div className="px-3 py-2 rounded-lg border border-violet-100 bg-violet-50 text-xs text-violet-700">
+                              Total a pagar: <span className="font-semibold">${Number(extraHoursPreview.totalPago || 0).toLocaleString('es-AR')}</span>
+                            </div>
+                          </div>
                         </form>
                       )}
 
@@ -834,36 +895,35 @@ export function Servicios() {
                         <table className="w-full text-sm">
                           <thead className="bg-amber-50">
                             <tr className="text-left text-slate-600">
-                              <th className="px-3 py-2 font-semibold">Fecha</th>
+                              <th className="px-3 py-2 font-semibold">Período</th>
                               <th className="px-3 py-2 font-semibold">Cuidador</th>
-                              <th className="px-3 py-2 font-semibold">Horas</th>
-                              <th className="px-3 py-2 font-semibold">Cobro</th>
-                              <th className="px-3 py-2 font-semibold">Pago</th>
+                              <th className="px-3 py-2 font-semibold">Horas acumuladas</th>
+                              <th className="px-3 py-2 font-semibold">Cobro acumulado</th>
+                              <th className="px-3 py-2 font-semibold">Pago acumulado</th>
                               <th className="px-3 py-2 font-semibold">Estado cobro</th>
                               <th className="px-3 py-2 font-semibold">Estado pago</th>
-                              <th className="px-3 py-2 font-semibold">Detalle</th>
                               <th className="px-3 py-2 font-semibold text-right">Acciones</th>
                             </tr>
                           </thead>
                           <tbody>
                             {extraHoursServicio.length === 0 && (
                               <tr>
-                                <td colSpan={9} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
+                                <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
                               </tr>
                             )}
                             {extraHoursServicio.map((item) => {
                               const hasPago = Boolean(item.pago?.id);
-                              const cobroPending = String(item.cobro.estado || '').toLowerCase() !== 'pagado';
-                              const pagoPending = hasPago
-                                ? String(item.pago?.estado || 'pendiente').toLowerCase() !== 'pagado'
-                                : false;
+                              const periodLabel = item.info.month && item.info.year
+                                ? new Date(item.info.year, item.info.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+                                : formatPeriodo(item.cobro);
+                              const hasDetails = item.info.details.length > 0;
+                              const isExpanded = extraHoursExpandedKey === item.ref;
                               return (
-                                <tr key={item.ref} className="border-t border-amber-100">
-                                  <td className="px-3 py-2 text-slate-600">
-                                    {item.cobro.fecha ? format(new Date(item.cobro.fecha), 'dd/MM/yyyy') : '-'}
-                                  </td>
-                                  <td className="px-3 py-2 text-slate-600">{item.pago?.caregiver?.nombre || 'Sin cuidador'}</td>
-                                  <td className="px-3 py-2">{item.info.hours ? `${item.info.hours} hs` : '-'}</td>
+                                <React.Fragment key={item.ref}>
+                                <tr className="border-t border-amber-100">
+                                  <td className="px-3 py-2 text-slate-600 capitalize">{periodLabel}</td>
+                                  <td className="px-3 py-2 text-slate-600">{item.info.caregiverNombre || item.pago?.caregiver?.nombre || 'Sin cuidador'}</td>
+                                  <td className="px-3 py-2">{item.info.totalHoras ? `${item.info.totalHoras} hs` : '-'}</td>
                                   <td className="px-3 py-2">${Number(item.cobro.monto || 0).toLocaleString('es-AR')}</td>
                                   <td className="px-3 py-2">{hasPago ? `$${Number(item.pago?.monto || 0).toLocaleString('es-AR')}` : '-'}</td>
                                   <td className="px-3 py-2">
@@ -890,45 +950,45 @@ export function Servicios() {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="px-3 py-2 text-slate-500">{item.info.detail || '-'}</td>
                                   <td className="px-3 py-2">
                                     <div className="flex items-center justify-end gap-2">
                                       <button
                                         type="button"
-                                        onClick={() => updatePaymentStatus(item.cobro, cobroPending ? 'pagado' : 'pendiente')}
-                                        className="text-xs px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                      >
-                                        {cobroPending ? 'Marcar cobrado' : 'Marcar pendiente'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => item.pago && updatePaymentStatus(item.pago, pagoPending ? 'pagado' : 'pendiente')}
-                                        className="text-xs px-2.5 py-1 rounded-md border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                        disabled={!hasPago}
-                                      >
-                                        {hasPago ? (pagoPending ? 'Pagar cuidador' : 'Marcar pendiente') : 'Sin orden'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          try {
-                                            await Promise.all([
-                                              adminApi.deleteFinanzasMovimiento(item.cobro.id),
-                                              item.pago?.id ? adminApi.deleteFinanzasMovimiento(item.pago.id) : Promise.resolve(),
-                                            ]);
-                                            showSuccess('Hora extra eliminada');
-                                            await refreshAll();
-                                          } catch (error) {
-                                            showError(error.message || 'No se pudo eliminar la hora extra');
-                                          }
+                                        onClick={() => {
+                                          if (!hasDetails) return;
+                                          setExtraHoursExpandedKey((prev) => (prev === item.ref ? '' : item.ref));
                                         }}
-                                        className="text-xs px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                        className="text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                                        disabled={!hasDetails}
                                       >
-                                        Eliminar
+                                        {isExpanded ? 'Ocultar detalle' : '+ Detalle'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => navigate('/admin/finanzas?tab=cobros&estado=pendiente')}
+                                        className="text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                                      >
+                                        Gestionar en finanzas
                                       </button>
                                     </div>
                                   </td>
                                 </tr>
+                                {isExpanded && (
+                                  <tr className="border-t border-amber-100 bg-amber-50/30">
+                                    <td colSpan={8} className="px-3 py-2">
+                                      <div className="space-y-1">
+                                        {item.info.details.map((detailItem) => (
+                                          <div key={detailItem.id} className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
+                                            <span>{detailItem.fecha ? format(new Date(detailItem.fecha), 'dd/MM/yyyy') : '-'}</span>
+                                            <span>· {Number.isFinite(detailItem.horas) ? `${detailItem.horas} hs` : '-'}</span>
+                                            <span>· {detailItem.concepto || 'Sin concepto'}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                                </React.Fragment>
                               );
                             })}
                           </tbody>
@@ -938,165 +998,104 @@ export function Servicios() {
 
                     <section className="border-t border-slate-200 pt-5">
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-semibold text-slate-700">Estado de cobros del servicio</p>
+                        <p className="text-sm font-semibold text-slate-700">Pendientes del servicio</p>
                         <button
                           type="button"
-                          onClick={() => {
-                            setPaymentEditorOpen((prev) => !prev);
-                            if (paymentEditorOpen) resetPaymentForm();
-                          }}
-                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                          title={paymentEditorOpen ? 'Cerrar alta de período' : 'Agregar período'}
-                          aria-label={paymentEditorOpen ? 'Cerrar alta de período' : 'Agregar período'}
+                          onClick={() => navigate('/admin/finanzas?tab=cobros&estado=pendiente')}
+                          className="text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          Gestionar en finanzas
                         </button>
                       </div>
 
-                      {paymentEditorOpen && (
-                        <form onSubmit={submitPaymentPeriod} className="rounded-xl border border-violet-100 bg-white p-3 mb-3 space-y-2">
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                            <select
-                              value={paymentForm.periodType}
-                              onChange={(e) => setPaymentForm((prev) => ({ ...prev, periodType: e.target.value }))}
-                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      <div className="space-y-3">
+                        <div className="rounded-xl border border-amber-100 bg-white p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-xs text-slate-500">Pendiente de cobro</p>
+                              <p className="text-lg font-semibold text-amber-700">${Number(pendientesCobroTotal || 0).toLocaleString('es-AR')}</p>
+                              <p className="text-xs text-slate-500">{movimientosServicioPendientes.cobros.length} registros</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDetailType((prev) => (prev === 'cobro' ? '' : 'cobro'))}
+                              className="text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
                             >
-                              <option value="month">Mensual</option>
-                              <option value="week">Semanal</option>
-                            </select>
-                            <input
-                              type="number"
-                              min="2020"
-                              max="2100"
-                              value={paymentForm.year}
-                              onChange={(e) => setPaymentForm((prev) => ({ ...prev, year: e.target.value }))}
-                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                              placeholder="Año"
-                              required
-                            />
-                            {paymentForm.periodType === 'month' ? (
-                              <select
-                                value={paymentForm.month}
-                                onChange={(e) => setPaymentForm((prev) => ({ ...prev, month: e.target.value }))}
-                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                                required
-                              >
-                                {Array.from({ length: 12 }, (_, idx) => (
-                                  <option key={idx + 1} value={idx + 1}>
-                                    {new Date(2026, idx, 1).toLocaleDateString('es-AR', { month: 'long' })}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                type="number"
-                                min="1"
-                                max="53"
-                                value={paymentForm.week}
-                                onChange={(e) => setPaymentForm((prev) => ({ ...prev, week: e.target.value }))}
-                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                                placeholder="Semana (1-53)"
-                                required
-                              />
-                            )}
-                            <select
-                              value={paymentForm.estado}
-                              onChange={(e) => setPaymentForm((prev) => ({ ...prev, estado: e.target.value }))}
-                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                            >
-                              <option value="pendiente">Pendiente</option>
-                              <option value="pagado">Pagado</option>
-                            </select>
+                              {pendingDetailType === 'cobro' ? 'Ocultar detalle' : '+ Cobros'}
+                            </button>
                           </div>
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={paymentForm.monto}
-                              onChange={(e) => setPaymentForm((prev) => ({ ...prev, monto: e.target.value }))}
-                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                              placeholder="Monto"
-                              required
-                            />
-                            <select
-                              value={paymentForm.metodo}
-                              onChange={(e) => setPaymentForm((prev) => ({ ...prev, metodo: e.target.value }))}
-                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                            >
-                              {METODOS_PAGO.map((metodo) => (
-                                <option key={metodo} value={metodo}>{metodo.replace('_', ' ')}</option>
-                              ))}
-                            </select>
-                            <input
-                              type="date"
-                              value={paymentForm.fechaPago}
-                              onChange={(e) => setPaymentForm((prev) => ({ ...prev, fechaPago: e.target.value }))}
-                              className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                              disabled={paymentForm.estado !== 'pagado'}
-                            />
-                            <Button type="submit" size="sm" className="h-full">
-                              Guardar período
-                            </Button>
-                          </div>
-                        </form>
-                      )}
-
-                      <div className="rounded-xl border border-violet-100 overflow-hidden bg-white">
-                        <table className="w-full text-sm">
-                          <thead className="bg-violet-50">
-                            <tr className="text-left text-slate-600">
-                              <th className="px-3 py-2 font-semibold">Período</th>
-                              <th className="px-3 py-2 font-semibold">Monto</th>
-                              <th className="px-3 py-2 font-semibold">Estado</th>
-                              <th className="px-3 py-2 font-semibold">Fecha pago</th>
-                              <th className="px-3 py-2 font-semibold text-right">Acciones</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {pagosServicio.length === 0 && (
-                              <tr>
-                                <td colSpan={5} className="px-3 py-4 text-center text-slate-500">Sin períodos registrados.</td>
-                              </tr>
-                            )}
-                            {pagosServicio.map((mov) => (
-                              <tr key={mov.id} className="border-t border-violet-100">
-                                <td className="px-3 py-2 capitalize">{formatPeriodo(mov)}</td>
-                                <td className="px-3 py-2">${Number(mov.monto || 0).toLocaleString('es-AR')}</td>
-                                <td className="px-3 py-2">
-                                  <span className={`text-xs px-2 py-1 rounded-full border ${
-                                    String(mov.estado).toLowerCase() === 'pagado'
-                                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                                      : 'bg-amber-100 text-amber-700 border-amber-200'
-                                  }`}>
-                                    {String(mov.estado).toLowerCase() === 'pagado' ? 'Pagado' : 'Pendiente'}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2 text-slate-500">
-                                  {mov.fechaPago ? format(new Date(mov.fechaPago), 'dd/MM/yyyy') : '-'}
-                                </td>
-                                <td className="px-3 py-2">
-                                  <div className="flex items-center justify-end gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => updatePaymentStatus(mov, 'pagado')}
-                                      className="text-xs px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                    >
-                                      Pagado
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => updatePaymentStatus(mov, 'pendiente')}
-                                      className="text-xs px-2.5 py-1 rounded-md border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                                    >
-                                      Pendiente
-                                    </button>
+                          {pendingDetailType === 'cobro' && (
+                            <div className="mt-3 space-y-2">
+                              {movimientosServicioPendientes.cobros.length === 0 && (
+                                <p className="text-xs text-slate-500">Sin cobros pendientes.</p>
+                              )}
+                              {movimientosServicioPendientes.cobros.map((mov) => {
+                                const extraInfo = mov.categoria === EXTRA_HOURS_CATEGORY ? parseExtraHoursInfo(mov) : null;
+                                return (
+                                  <div key={mov.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-xs font-medium text-slate-700 capitalize">
+                                        {mov.categoria === EXTRA_HOURS_CATEGORY
+                                          ? `Horas extra · ${extraInfo?.month && extraInfo?.year ? new Date(extraInfo.year, extraInfo.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }) : formatPeriodo(mov)}`
+                                          : formatPeriodo(mov)}
+                                      </p>
+                                      <p className="text-xs font-semibold text-slate-700">${Number(mov.monto || 0).toLocaleString('es-AR')}</p>
+                                    </div>
+                                    {extraInfo?.details?.length > 0 && (
+                                      <p className="text-[11px] text-slate-500 mt-1">
+                                        {extraInfo.details.length} cargas · {Number(extraInfo.totalHoras || 0).toLocaleString('es-AR')} hs
+                                      </p>
+                                    )}
                                   </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-violet-100 bg-white p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-xs text-slate-500">Pendiente de pago</p>
+                              <p className="text-lg font-semibold text-violet-700">${Number(pendientesPagoTotal || 0).toLocaleString('es-AR')}</p>
+                              <p className="text-xs text-slate-500">{movimientosServicioPendientes.pagos.length} registros</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDetailType((prev) => (prev === 'pago' ? '' : 'pago'))}
+                              className="text-xs px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                            >
+                              {pendingDetailType === 'pago' ? 'Ocultar detalle' : '+ Pagos'}
+                            </button>
+                          </div>
+                          {pendingDetailType === 'pago' && (
+                            <div className="mt-3 space-y-2">
+                              {movimientosServicioPendientes.pagos.length === 0 && (
+                                <p className="text-xs text-slate-500">Sin pagos pendientes.</p>
+                              )}
+                              {movimientosServicioPendientes.pagos.map((mov) => {
+                                const extraInfo = mov.categoria === EXTRA_HOURS_CATEGORY ? parseExtraHoursInfo(mov) : null;
+                                return (
+                                  <div key={mov.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-xs font-medium text-slate-700 capitalize">
+                                        {mov.categoria === EXTRA_HOURS_CATEGORY
+                                          ? `Horas extra · ${mov.caregiver?.nombre || extraInfo?.caregiverNombre || 'Cuidador'}`
+                                          : (mov.caregiver?.nombre || 'Pago sin cuidador')}
+                                      </p>
+                                      <p className="text-xs font-semibold text-slate-700">${Number(mov.monto || 0).toLocaleString('es-AR')}</p>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mt-1 capitalize">
+                                      {extraInfo?.month && extraInfo?.year
+                                        ? new Date(extraInfo.year, extraInfo.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+                                        : formatPeriodo(mov)}
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </section>
                   </div>

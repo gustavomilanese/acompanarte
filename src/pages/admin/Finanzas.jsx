@@ -14,6 +14,8 @@ const TAB_COBROS = 'cobros';
 const TAB_PAGOS = 'pagos';
 const TAB_RETIROS = 'retiros';
 const TAB_GASTOS = 'gastos';
+const EXTRA_HOURS_CATEGORY = 'horas_extra';
+const EXTRA_HOURS_AGGREGATE_PREFIX = '[#EXH_AGG:v1]';
 const DEFAULT_RANGE_START = '2026-01';
 const GASTO_CATEGORIAS = [
   { value: 'cafeteria', label: 'Cafeteria' },
@@ -114,6 +116,52 @@ const getDefaultCategoria = (tipo) => {
   return 'mensualidad';
 };
 
+const decodeBase64ToText = (base64Text) => {
+  const normalized = String(base64Text || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+};
+
+const parseExtraHoursAggregateNotes = (notes) => {
+  const raw = String(notes || '').trim();
+  if (!raw) return null;
+  const markerIndex = raw.indexOf(EXTRA_HOURS_AGGREGATE_PREFIX);
+  if (markerIndex < 0) return null;
+  const encoded = raw.slice(markerIndex + EXTRA_HOURS_AGGREGATE_PREFIX.length).trim();
+  if (!encoded) return null;
+
+  try {
+    const decoded = decodeBase64ToText(encoded);
+    const payload = JSON.parse(decoded);
+    if (!payload || payload.kind !== 'extra_hours_aggregate') return null;
+    const detalles = Array.isArray(payload.detalles) ? payload.detalles : [];
+    return {
+      ...payload,
+      detalles: detalles
+        .map((item, idx) => {
+          const horas = Number(item?.horas);
+          const montoCobro = Number(item?.montoCobro);
+          const montoPago = Number(item?.montoPago);
+          const fechaValue = item?.fecha ? new Date(item.fecha) : null;
+          const fecha = fechaValue && !Number.isNaN(fechaValue.getTime()) ? fechaValue : null;
+          return {
+            id: String(item?.id || `det-${idx + 1}`),
+            fecha,
+            horas: Number.isFinite(horas) ? horas : null,
+            montoCobro: Number.isFinite(montoCobro) ? montoCobro : 0,
+            montoPago: Number.isFinite(montoPago) ? montoPago : 0,
+            concepto: String(item?.concepto || '').trim(),
+          };
+        })
+        .filter(Boolean),
+    };
+  } catch {
+    return null;
+  }
+};
+
 export function Finanzas() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -163,6 +211,7 @@ export function Finanzas() {
   });
   const [cameFromServiciosFlow, setCameFromServiciosFlow] = useState(false);
   const [returnServiceId, setReturnServiceId] = useState('');
+  const [expandedExtraHoursMovements, setExpandedExtraHoursMovements] = useState({});
   const dashboardRef = useRef(null);
 
   const loadData = async () => {
@@ -198,9 +247,22 @@ export function Finanzas() {
 
   useEffect(() => {
     const qs = new URLSearchParams(location.search);
-    const serviceId = qs.get('serviceId');
+    const tabParam = qs.get('tab');
+    const estadoParam = qs.get('estado');
+
+    if (tabParam === TAB_COBROS || tabParam === TAB_PAGOS || tabParam === TAB_RETIROS || tabParam === TAB_GASTOS) {
+      setTab(tabParam);
+    }
+    if (estadoParam === 'pendiente' || estadoParam === 'todos' || estadoParam === 'pagado') {
+      setEstadoFiltro(estadoParam);
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    const qs = new URLSearchParams(location.search);
     const fromServicios = qs.get('from') === 'servicios';
-    if (!serviceId || !servicios.length) return;
+    const serviceId = qs.get('serviceId');
+    if (!fromServicios || !serviceId || !servicios.length) return;
 
     setCameFromServiciosFlow(fromServicios);
     setReturnServiceId(serviceId);
@@ -212,12 +274,12 @@ export function Finanzas() {
 
     const existing = movimientosTotales.find((m) =>
       m.tipo === 'cobro' &&
+      m.categoria !== EXTRA_HOURS_CATEGORY &&
       m.serviceId === serviceId &&
       Number(m.year) === year &&
       Number(m.month) === month
     );
-
-    if (qs.get('tab') === 'cobros') setTab(TAB_COBROS);
+    setTab(TAB_COBROS);
 
     if (existing) {
       setRegistroModal({
@@ -502,7 +564,15 @@ export function Finanzas() {
   const renderPeriodo = (m) => `${months[(m.month || 1) - 1]} ${m.year}`;
 
   const getNombreMovimiento = (m) => {
+    const extraAggregate = m.categoria === EXTRA_HOURS_CATEGORY
+      ? parseExtraHoursAggregateNotes(m.notas)
+      : null;
+
     if (m.tipo === 'cobro') {
+      if (m.categoria === EXTRA_HOURS_CATEGORY) {
+        const caregiverName = extraAggregate?.caregiverNombre || m.caregiver?.nombre || 'Cuidador';
+        return `Horas extra · ${caregiverName}`;
+      }
       if (m.patient?.nombre) return m.patient.nombre;
       const service = m.serviceId ? serviciosById.get(m.serviceId) : null;
       return service?.paciente?.nombre || 'Cliente no asignado';
@@ -513,6 +583,9 @@ export function Finanzas() {
     if (m.tipo === 'gasto') {
       return m.notas?.trim() || m.categoria || 'Gasto';
     }
+    if (m.categoria === EXTRA_HOURS_CATEGORY) {
+      return extraAggregate?.caregiverNombre || m.caregiver?.nombre || 'Cuidador no asignado';
+    }
     return m.caregiver?.nombre || 'Cuidador no asignado';
   };
 
@@ -520,6 +593,15 @@ export function Finanzas() {
     const service = m.serviceId ? serviciosById.get(m.serviceId) : null;
     const pacienteNombre = m.patient?.nombre || service?.paciente?.nombre || null;
     const direccion = service?.direccion || service?.paciente?.direccion || null;
+    const extraAggregate = m.categoria === EXTRA_HOURS_CATEGORY
+      ? parseExtraHoursAggregateNotes(m.notas)
+      : null;
+
+    if (m.categoria === EXTRA_HOURS_CATEGORY && extraAggregate?.month && extraAggregate?.year) {
+      const monthLabel = new Date(extraAggregate.year, extraAggregate.month - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+      if (pacienteNombre) return `${pacienteNombre} · ${monthLabel}`;
+      return monthLabel;
+    }
 
     if (pacienteNombre && direccion) return `${pacienteNombre} · ${direccion}`;
     if (pacienteNombre) return pacienteNombre;
@@ -822,6 +904,11 @@ export function Finanzas() {
                   const referencia = getReferenciaMovimiento(m);
                   const isCompletado = String(m.estado || '').toLowerCase() !== 'pendiente';
                   const isCobroCompletado = m.tipo === 'cobro' && isCompletado;
+                  const extraAggregate = m.categoria === EXTRA_HOURS_CATEGORY
+                    ? parseExtraHoursAggregateNotes(m.notas)
+                    : null;
+                  const hasExtraDetails = Boolean(extraAggregate?.detalles?.length);
+                  const isExtraDetailsOpen = Boolean(expandedExtraHoursMovements[m.id]);
 
                   return (
                     <div
@@ -858,14 +945,44 @@ export function Finanzas() {
                         Fecha: {m.fechaPago ? new Date(m.fechaPago).toLocaleDateString('es-AR') : '-'}
                         {m.registradoPor ? ` · Registrado por: ${m.registradoPor}` : ''}
                       </p>
+                      {hasExtraDetails && isExtraDetailsOpen && (
+                        <div className="mt-2 rounded-md border border-slate-200 bg-white px-2.5 py-2">
+                          <p className="text-[11px] font-medium text-slate-600 mb-1">Detalle de horas extra</p>
+                          <div className="space-y-1">
+                            {extraAggregate.detalles.map((item) => (
+                              <div key={item.id} className="text-[11px] text-slate-600 flex flex-wrap gap-1.5">
+                                <span>{item.fecha ? item.fecha.toLocaleDateString('es-AR') : '-'}</span>
+                                <span>· {Number.isFinite(item.horas) ? `${item.horas} hs` : '-'}</span>
+                                <span>· {item.concepto || 'Sin concepto'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="mt-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openEditarRegistroModal(m)}
-                          className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                        >
-                          Editar
-                        </button>
+                        {hasExtraDetails && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedExtraHoursMovements((prev) => ({
+                                ...prev,
+                                [m.id]: !prev[m.id],
+                              }));
+                            }}
+                            className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                          >
+                            {isExtraDetailsOpen ? 'Ocultar detalle' : '+ Detalle'}
+                          </button>
+                        )}
+                        {m.categoria !== EXTRA_HOURS_CATEGORY && (
+                          <button
+                            type="button"
+                            onClick={() => openEditarRegistroModal(m)}
+                            className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                          >
+                            Editar
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleDeleteMovimiento(m.id)}

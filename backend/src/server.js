@@ -601,8 +601,66 @@ function randomCode() {
   return String(Math.floor(1000 + Math.random() * 9000))
 }
 
-function buildExtraHoursTrackingRef() {
-  return `EXH-${Date.now()}-${randomCode()}`
+const EXTRA_HOURS_AGGREGATE_PREFIX = '[#EXH_AGG:v1]'
+
+function roundCurrency(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return 0
+  return Math.round((num + Number.EPSILON) * 100) / 100
+}
+
+function parseExtraHoursAggregateNotes(notes) {
+  const raw = String(notes || '').trim()
+  if (!raw) return null
+  const markerIndex = raw.indexOf(EXTRA_HOURS_AGGREGATE_PREFIX)
+  if (markerIndex < 0) return null
+
+  const encoded = raw.slice(markerIndex + EXTRA_HOURS_AGGREGATE_PREFIX.length).trim()
+  if (!encoded) return null
+
+  try {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf8')
+    const payload = JSON.parse(decoded)
+    if (!payload || typeof payload !== 'object') return null
+    if (payload.kind !== 'extra_hours_aggregate') return null
+    return payload
+  } catch {
+    return null
+  }
+}
+
+function buildExtraHoursAggregateNotes(payload) {
+  const json = JSON.stringify(payload || {})
+  const encoded = Buffer.from(json, 'utf8').toString('base64')
+  return `${EXTRA_HOURS_AGGREGATE_PREFIX}${encoded}`
+}
+
+function normalizeExtraHoursDetail(detail, fallbackId = null) {
+  if (!detail || typeof detail !== 'object') return null
+
+  const parsedDate = detail.fecha ? new Date(detail.fecha) : null
+  const normalizedDate = parsedDate && !Number.isNaN(parsedDate.getTime())
+    ? parsedDate.toISOString().slice(0, 10)
+    : null
+
+  const horas = Number(detail.horas)
+  const montoCobro = Number(detail.montoCobro)
+  const montoPago = Number(detail.montoPago)
+  const valorHoraCobro = Number(detail.valorHoraCobro)
+  const valorHoraPago = Number(detail.valorHoraPago)
+
+  return {
+    id: String(detail.id || fallbackId || `det-${Date.now()}-${randomCode()}`),
+    fecha: normalizedDate,
+    horas: Number.isFinite(horas) ? horas : null,
+    valorHoraCobro: Number.isFinite(valorHoraCobro) ? roundCurrency(valorHoraCobro) : null,
+    valorHoraPago: Number.isFinite(valorHoraPago) ? roundCurrency(valorHoraPago) : null,
+    montoCobro: Number.isFinite(montoCobro) ? roundCurrency(montoCobro) : 0,
+    montoPago: Number.isFinite(montoPago) ? roundCurrency(montoPago) : 0,
+    concepto: String(detail.concepto || '').trim(),
+    createdAt: detail.createdAt ? String(detail.createdAt) : new Date().toISOString(),
+    legacy: Boolean(detail.legacy),
+  }
 }
 
 function parseJsonSafe(text, fallback = {}) {
@@ -1552,25 +1610,30 @@ app.post('/api/admin/servicios-modulo/:id/payments', asyncHandler(async (req, re
 }))
 
 app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req, res) => {
-  requireFields(req.body, ['caregiverId', 'fecha', 'horas', 'montoCobro', 'montoPago'])
+  requireFields(req.body, ['caregiverId', 'fecha', 'horas'])
 
   const horas = Number(req.body.horas)
-  const montoCobro = Number(req.body.montoCobro)
-  const montoPago = Number(req.body.montoPago)
   const fecha = new Date(req.body.fecha)
+
+  const valorHoraCobroInput = req.body.valorHoraCobro !== undefined
+    ? Number(req.body.valorHoraCobro)
+    : (req.body.montoCobro !== undefined && horas > 0 ? Number(req.body.montoCobro) / horas : Number.NaN)
+  const valorHoraPagoInput = req.body.valorHoraPago !== undefined
+    ? Number(req.body.valorHoraPago)
+    : (req.body.montoPago !== undefined && horas > 0 ? Number(req.body.montoPago) / horas : Number.NaN)
 
   if (!Number.isFinite(horas) || horas <= 0) {
     const error = new Error('La cantidad de horas extra es inválida.')
     error.status = 400
     throw error
   }
-  if (!Number.isFinite(montoCobro) || montoCobro < 0) {
-    const error = new Error('El monto de cobro es inválido.')
+  if (!Number.isFinite(valorHoraCobroInput) || valorHoraCobroInput < 0) {
+    const error = new Error('El valor hora de cobro es inválido.')
     error.status = 400
     throw error
   }
-  if (!Number.isFinite(montoPago) || montoPago < 0) {
-    const error = new Error('El monto de pago es inválido.')
+  if (!Number.isFinite(valorHoraPagoInput) || valorHoraPagoInput < 0) {
+    const error = new Error('El costo hora de pago es inválido.')
     error.status = 400
     throw error
   }
@@ -1580,8 +1643,23 @@ app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req,
     throw error
   }
 
-  const detail = String(req.body.detalle || '').trim()
-  const trackingRef = buildExtraHoursTrackingRef()
+  const valorHoraCobro = roundCurrency(valorHoraCobroInput)
+  const valorHoraPago = roundCurrency(valorHoraPagoInput)
+  const montoCobroLinea = roundCurrency(horas * valorHoraCobro)
+  const montoPagoLinea = roundCurrency(horas * valorHoraPago)
+
+  if (!Number.isFinite(montoCobroLinea) || montoCobroLinea < 0) {
+    const error = new Error('El monto de cobro es inválido.')
+    error.status = 400
+    throw error
+  }
+  if (!Number.isFinite(montoPagoLinea) || montoPagoLinea < 0) {
+    const error = new Error('El monto de pago es inválido.')
+    error.status = 400
+    throw error
+  }
+
+  const detail = String(req.body.detalle || req.body.concepto || '').trim()
 
   const result = await prisma.$transaction(async (tx) => {
     const service = await tx.service.findUnique({
@@ -1621,69 +1699,196 @@ app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req,
 
     const year = fecha.getFullYear()
     const month = fecha.getMonth() + 1
-    const detailSuffix = detail ? ` · ${detail}` : ''
-    const notesBase = `[#EXH:${trackingRef}] ${horas} hs${detailSuffix}`
 
-    const cobro = await tx.financeMovement.create({
-      data: {
-        tipo: 'cobro',
-        categoria: 'horas_extra',
-        metodo: 'transferencia',
-        monto: montoCobro,
-        fecha,
-        fechaPago: null,
-        year,
-        month,
-        week: null,
-        periodType: 'month',
-        estado: 'pendiente',
-        registradoPor: req.body.registradoPor || null,
-        notas: notesBase,
-        patientId: service.pacienteId,
-        serviceId: service.id,
-      },
-      include: {
-        patient: { select: { id: true, nombre: true } },
-        caregiver: { select: { id: true, nombre: true } },
-        service: { select: { id: true } },
-      },
+    const whereAggregate = {
+      categoria: 'horas_extra',
+      serviceId: service.id,
+      caregiverId: caregiver.id,
+      year,
+      month,
+      periodType: 'month',
+    }
+
+    const [existingCobros, existingPagos] = await Promise.all([
+      tx.financeMovement.findMany({
+        where: { ...whereAggregate, tipo: 'cobro' },
+        orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      }),
+      tx.financeMovement.findMany({
+        where: { ...whereAggregate, tipo: 'pago' },
+        orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      }),
+    ])
+
+    const pickExistingMovement = (items) => {
+      if (!Array.isArray(items) || items.length === 0) return null
+      const pending = items.find((item) => String(item.estado || '').toLowerCase() === 'pendiente')
+      return pending || items[0]
+    }
+
+    const existingCobro = pickExistingMovement(existingCobros)
+    const existingPago = pickExistingMovement(existingPagos)
+
+    const aggregateFromCobro = parseExtraHoursAggregateNotes(existingCobro?.notas || '')
+    const aggregateFromPago = parseExtraHoursAggregateNotes(existingPago?.notas || '')
+    const currentAggregate = aggregateFromCobro || aggregateFromPago
+
+    const detalles = Array.isArray(currentAggregate?.detalles)
+      ? currentAggregate.detalles
+        .map((item, idx) => normalizeExtraHoursDetail(item, `det-${idx + 1}`))
+        .filter(Boolean)
+      : []
+
+    if (detalles.length === 0 && (existingCobro || existingPago)) {
+      const montoCobroLegacy = roundCurrency(existingCobro?.monto || 0)
+      const montoPagoLegacy = roundCurrency(existingPago?.monto || 0)
+      if (montoCobroLegacy > 0 || montoPagoLegacy > 0) {
+        const fallbackDate = existingCobro?.fecha || existingPago?.fecha || fecha
+        const normalizedFallbackDate = fallbackDate instanceof Date && !Number.isNaN(fallbackDate.getTime())
+          ? fallbackDate.toISOString().slice(0, 10)
+          : fecha.toISOString().slice(0, 10)
+        const legacyDetail = normalizeExtraHoursDetail({
+          id: `legacy-${Date.now()}-${randomCode()}`,
+          fecha: normalizedFallbackDate,
+          horas: null,
+          valorHoraCobro: null,
+          valorHoraPago: null,
+          montoCobro: montoCobroLegacy,
+          montoPago: montoPagoLegacy,
+          concepto: 'Saldo previo',
+          legacy: true,
+        })
+        if (legacyDetail) detalles.push(legacyDetail)
+      }
+    }
+
+    const detailEntry = normalizeExtraHoursDetail({
+      id: `det-${Date.now()}-${randomCode()}`,
+      fecha: fecha.toISOString().slice(0, 10),
+      horas,
+      valorHoraCobro,
+      valorHoraPago,
+      montoCobro: montoCobroLinea,
+      montoPago: montoPagoLinea,
+      concepto: detail,
     })
 
-    const pago = await tx.financeMovement.create({
-      data: {
-        tipo: 'pago',
-        categoria: 'horas_extra',
-        metodo: 'transferencia',
-        monto: montoPago,
-        fecha,
-        fechaPago: null,
-        year,
-        month,
-        week: null,
-        periodType: 'month',
-        estado: 'pendiente',
-        registradoPor: req.body.registradoPor || null,
-        notas: `${notesBase} · ${caregiver.nombre}`,
-        caregiverId: caregiver.id,
-        serviceId: service.id,
-      },
-      include: {
-        patient: { select: { id: true, nombre: true } },
-        caregiver: { select: { id: true, nombre: true } },
-        service: { select: { id: true } },
-      },
-    })
+    if (!detailEntry) {
+      const error = new Error('No se pudo procesar el detalle de horas extra.')
+      error.status = 400
+      throw error
+    }
+    detalles.push(detailEntry)
+
+    const totals = detalles.reduce((acc, item) => ({
+      horas: acc.horas + (Number.isFinite(item.horas) ? Number(item.horas) : 0),
+      montoCobro: acc.montoCobro + roundCurrency(item.montoCobro || 0),
+      montoPago: acc.montoPago + roundCurrency(item.montoPago || 0),
+    }), { horas: 0, montoCobro: 0, montoPago: 0 })
+
+    totals.horas = roundCurrency(totals.horas)
+    totals.montoCobro = roundCurrency(totals.montoCobro)
+    totals.montoPago = roundCurrency(totals.montoPago)
+
+    const aggregatePayload = {
+      version: 1,
+      kind: 'extra_hours_aggregate',
+      serviceId: service.id,
+      patientId: service.pacienteId,
+      patientNombre: service.paciente?.nombre || null,
+      caregiverId: caregiver.id,
+      caregiverNombre: caregiver.nombre || null,
+      year,
+      month,
+      detalles,
+      totals,
+    }
+    const aggregateNotes = buildExtraHoursAggregateNotes(aggregatePayload)
+
+    const sharedBaseData = {
+      categoria: 'horas_extra',
+      metodo: 'transferencia',
+      fecha,
+      fechaPago: null,
+      year,
+      month,
+      week: null,
+      periodType: 'month',
+      estado: 'pendiente',
+      registradoPor: req.body.registradoPor || null,
+      notas: aggregateNotes,
+      caregiverId: caregiver.id,
+      serviceId: service.id,
+    }
+
+    const cobro = existingCobro
+      ? await tx.financeMovement.update({
+        where: { id: existingCobro.id },
+        data: {
+          ...sharedBaseData,
+          tipo: 'cobro',
+          monto: totals.montoCobro,
+          patientId: service.pacienteId,
+        },
+        include: {
+          patient: { select: { id: true, nombre: true } },
+          caregiver: { select: { id: true, nombre: true } },
+          service: { select: { id: true } },
+        },
+      })
+      : await tx.financeMovement.create({
+        data: {
+          ...sharedBaseData,
+          tipo: 'cobro',
+          monto: totals.montoCobro,
+          patientId: service.pacienteId,
+        },
+        include: {
+          patient: { select: { id: true, nombre: true } },
+          caregiver: { select: { id: true, nombre: true } },
+          service: { select: { id: true } },
+        },
+      })
+
+    const pago = existingPago
+      ? await tx.financeMovement.update({
+        where: { id: existingPago.id },
+        data: {
+          ...sharedBaseData,
+          tipo: 'pago',
+          monto: totals.montoPago,
+          patientId: null,
+        },
+        include: {
+          patient: { select: { id: true, nombre: true } },
+          caregiver: { select: { id: true, nombre: true } },
+          service: { select: { id: true } },
+        },
+      })
+      : await tx.financeMovement.create({
+        data: {
+          ...sharedBaseData,
+          tipo: 'pago',
+          monto: totals.montoPago,
+          patientId: null,
+        },
+        include: {
+          patient: { select: { id: true, nombre: true } },
+          caregiver: { select: { id: true, nombre: true } },
+          service: { select: { id: true } },
+        },
+      })
 
     await tx.serviceEvent.create({
       data: {
         serviceId: service.id,
         tipo: 'assignment_changed',
-        nota: `Horas extra cargadas: ${horas} hs · ${caregiver.nombre}`,
+        nota: `Horas extra acumuladas: ${horas} hs · ${caregiver.nombre} (${month}/${year})`,
       },
     })
 
     return {
-      trackingRef,
+      aggregate: aggregatePayload,
       cobro: mapFinanceMovement(cobro),
       pago: mapFinanceMovement(pago),
     }
@@ -1839,7 +2044,13 @@ app.post('/api/admin/finanzas/movimientos', asyncHandler(async (req, res) => {
       },
     })
 
-    if (created.serviceId && created.tipo === 'cobro') {
+    const shouldSyncServicePayment = (
+      created.serviceId &&
+      created.tipo === 'cobro' &&
+      String(created.categoria || '').toLowerCase() !== 'horas_extra'
+    )
+
+    if (shouldSyncServicePayment) {
       const syncYear = Number(created.year || year)
       const syncMonth = Number(created.month || (created.fechaPago ? new Date(created.fechaPago).getMonth() + 1 : new Date(created.fecha).getMonth() + 1))
       if (Number.isInteger(syncYear) && Number.isInteger(syncMonth) && syncMonth >= 1 && syncMonth <= 12) {
@@ -1893,7 +2104,13 @@ app.put('/api/admin/finanzas/movimientos/:id', asyncHandler(async (req, res) => 
       },
     })
 
-    if (updated.serviceId && updated.tipo === 'cobro') {
+    const shouldSyncServicePayment = (
+      updated.serviceId &&
+      updated.tipo === 'cobro' &&
+      String(updated.categoria || '').toLowerCase() !== 'horas_extra'
+    )
+
+    if (shouldSyncServicePayment) {
       const syncYear = Number(updated.year || new Date().getFullYear())
       const syncMonth = Number(updated.month || (updated.fechaPago ? new Date(updated.fechaPago).getMonth() + 1 : new Date(updated.fecha).getMonth() + 1))
       if (Number.isInteger(syncYear) && Number.isInteger(syncMonth) && syncMonth >= 1 && syncMonth <= 12) {
