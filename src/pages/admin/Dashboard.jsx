@@ -167,6 +167,38 @@ const ZONA_AMBA_BY_PARTIDO = {
   'vicente lopez': 'zona_norte',
   zarate: 'zona_norte',
 };
+const ZONA_AMBA_BY_LOCALITY_KEYWORD = {
+  'lomas del mirador': 'zona_oeste',
+  'ramos mejia': 'zona_oeste',
+  'san justo': 'zona_oeste',
+  haedo: 'zona_oeste',
+  castelar: 'zona_oeste',
+  moron: 'zona_oeste',
+  morón: 'zona_oeste',
+  ituzaingo: 'zona_oeste',
+  ituzaingó: 'zona_oeste',
+  hurlingham: 'zona_oeste',
+  'ciudadela': 'zona_oeste',
+  'caseros': 'zona_oeste',
+  'el palomar': 'zona_oeste',
+  olivos: 'zona_norte',
+  martinez: 'zona_norte',
+  martínez: 'zona_norte',
+  beccar: 'zona_norte',
+  boulogne: 'zona_norte',
+  victoria: 'zona_norte',
+  tigre: 'zona_norte',
+  adrogue: 'zona_sur',
+  adrogué: 'zona_sur',
+  temperley: 'zona_sur',
+  banfield: 'zona_sur',
+  burzaco: 'zona_sur',
+  quilmes: 'zona_sur',
+  bernal: 'zona_sur',
+  ezpeleta: 'zona_sur',
+  lanus: 'zona_sur',
+  lanús: 'zona_sur',
+};
 const ALTAS_POR_PAGINA = 3;
 const DASHBOARD_FINANCE_RANGE_START = new Date(2026, 0, 1, 0, 0, 0, 0);
 const CURRENCY_FORMATTER = new Intl.NumberFormat('es-AR', {
@@ -209,7 +241,104 @@ function resolveDashboardAmbaZone({ provincia = '', zona = '', zonaAmba = '' }) 
   if (provinciaNorm !== 'buenos aires' && provinciaNorm !== 'provincia de buenos aires') return '';
 
   const zonaNorm = normalizeDashboardText(zona);
-  return ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]] || '';
+  if (ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]]) {
+    return ZONAS_AMBA_BY_KEY[ZONA_AMBA_BY_PARTIDO[zonaNorm]];
+  }
+
+  const combinedText = `${provincia} ${zona}`.trim();
+  const combinedNorm = normalizeDashboardText(combinedText);
+  if (!combinedNorm) return '';
+
+  for (const barrio of BARRIOS_CABA) {
+    if (combinedNorm.includes(normalizeDashboardText(barrio))) {
+      return 'CABA';
+    }
+  }
+
+  for (const [keyword, zoneKey] of Object.entries({
+    ...ZONA_AMBA_BY_PARTIDO,
+    ...ZONA_AMBA_BY_LOCALITY_KEYWORD,
+  })) {
+    if (combinedNorm.includes(normalizeDashboardText(keyword))) {
+      return ZONAS_AMBA_BY_KEY[zoneKey] || '';
+    }
+  }
+
+  return '';
+}
+
+function DashboardZonePieChart({ items, gradientPrefix }) {
+  const usedItems = items.filter((item) => Number(item.value || 0) > 0);
+
+  if (usedItems.length === 0) {
+    return <p className="text-xs text-slate-400">Sin datos de zona.</p>;
+  }
+
+  const total = usedItems.reduce((acc, z) => acc + z.value, 0) || 1;
+  const cx = 72;
+  const cy = 72;
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+  let accumulated = 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-center">
+        <div className="relative h-[144px] w-[144px]">
+          <svg width="144" height="144" viewBox="0 0 144 144">
+            <defs>
+              {usedItems.map((item, idx) => (
+                <linearGradient key={`${gradientPrefix}-grad-${item.zona}`} id={`${gradientPrefix}-grad-${idx}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor={PIE_COLORS[idx % PIE_COLORS.length][0]} />
+                  <stop offset="100%" stopColor={PIE_COLORS[idx % PIE_COLORS.length][1]} />
+                </linearGradient>
+              ))}
+            </defs>
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="22" />
+            {usedItems.map((item, index) => {
+              const dash = (Number(item.value || 0) / total) * circumference;
+              const gap = Math.max(circumference - dash, 0);
+              const offset = -accumulated;
+              accumulated += dash;
+
+              return (
+                <circle
+                  key={item.zona}
+                  cx={cx}
+                  cy={cy}
+                  r={radius}
+                  fill="none"
+                  stroke={`url(#${gradientPrefix}-grad-${index})`}
+                  strokeWidth="22"
+                  strokeLinecap="round"
+                  strokeDasharray={`${dash} ${gap}`}
+                  strokeDashoffset={offset}
+                  transform={`rotate(-90 ${cx} ${cy})`}
+                />
+              );
+            })}
+            <circle cx={cx} cy={cy} r={28} fill="#ffffff" />
+          </svg>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+        {usedItems.map((item, index) => (
+          <div key={item.zona} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className="h-2.5 w-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length][0] }}
+              />
+              <span className="text-xs text-slate-600 truncate">{item.zona}</span>
+            </div>
+            <span className="text-xs font-medium text-slate-700">
+              {item.value} ({Math.round((item.value / total) * 100)}%)
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function AdminDashboard() {
@@ -1108,158 +1237,14 @@ export function AdminDashboard() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-lime-50/30 to-emerald-50/30 shadow-sm p-3">
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-lime-50/30 to-emerald-50/30 shadow-sm p-4 md:col-span-2">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Cuidadores por zona</p>
-                {cuidadoresPorZona.length === 0 ? (
-                  <p className="text-xs text-slate-400">Sin datos de zona.</p>
-                ) : (
-                  <div className="grid grid-cols-[110px_1fr] gap-3 items-center">
-                    {(() => {
-                      const total = cuidadoresPorZona.reduce((acc, z) => acc + z.value, 0) || 1;
-                      const cx = 55;
-                      const cy = 55;
-                      const radius = 34;
-                      const circumference = 2 * Math.PI * radius;
-                      let accumulated = 0;
-
-                      return (
-                        <>
-                          <div className="relative w-[110px] h-[110px]">
-                            <svg width="110" height="110" viewBox="0 0 110 110">
-                              <defs>
-                                {PIE_COLORS.map((pair, idx) => (
-                                  <linearGradient key={`zona-grad-${idx}`} id={`zona-grad-${idx}`} x1="0%" y1="0%" x2="100%" y2="100%">
-                                    <stop offset="0%" stopColor={pair[0]} />
-                                    <stop offset="100%" stopColor={pair[1]} />
-                                  </linearGradient>
-                                ))}
-                              </defs>
-                              <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="18" />
-                              {cuidadoresPorZona.map((z, index) => {
-                                const value = Number(z.value || 0);
-                                if (value <= 0) return null;
-                                const dash = (value / total) * circumference;
-                                const gap = Math.max(circumference - dash, 0);
-                                const offset = -accumulated;
-                                accumulated += dash;
-
-                                return (
-                                  <circle
-                                    key={z.zona}
-                                    cx={cx}
-                                    cy={cy}
-                                    r={radius}
-                                    fill="none"
-                                    stroke={`url(#zona-grad-${index % PIE_COLORS.length})`}
-                                    strokeWidth="18"
-                                    strokeLinecap="round"
-                                    strokeDasharray={`${dash} ${gap}`}
-                                    strokeDashoffset={offset}
-                                    transform={`rotate(-90 ${cx} ${cy})`}
-                                  />
-                                );
-                              })}
-                              <circle cx={cx} cy={cy} r={20} fill="#ffffff" />
-                            </svg>
-                          </div>
-                          <div className="space-y-1">
-                            {cuidadoresPorZona.map((z, index) => (
-                              <div key={z.zona} className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span
-                                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                                    style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length][0] }}
-                                  />
-                                  <span className="text-xs text-slate-600 truncate">{z.zona}</span>
-                                </div>
-                                <span className="text-xs text-slate-700 font-medium">
-                                  {z.value} ({Math.round((z.value / total) * 100)}%)
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
+                <DashboardZonePieChart items={cuidadoresPorZona} gradientPrefix="caregiver-zone" />
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-3">
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-amber-50/30 to-orange-50/30 shadow-sm p-4 md:col-span-3">
                 <p className="text-sm font-semibold text-slate-700 mb-3">Pacientes por zona</p>
-                {pacientesPorZona.every((z) => z.value === 0) ? (
-                  <p className="text-xs text-slate-400">Sin datos de zona.</p>
-                ) : (
-                  <div className="grid grid-cols-[110px_1fr] gap-3 items-center">
-                    {(() => {
-                      const total = pacientesPorZona.reduce((acc, z) => acc + z.value, 0) || 1;
-                      const cx = 55;
-                      const cy = 55;
-                      const radius = 34;
-                      const circumference = 2 * Math.PI * radius;
-                      let accumulated = 0;
-
-                      return (
-                        <>
-                          <div className="relative w-[110px] h-[110px]">
-                            <svg width="110" height="110" viewBox="0 0 110 110">
-                              <defs>
-                                {PIE_COLORS.map((pair, idx) => (
-                                  <linearGradient key={`patient-zona-grad-${idx}`} id={`patient-zona-grad-${idx}`} x1="0%" y1="0%" x2="100%" y2="100%">
-                                    <stop offset="0%" stopColor={pair[0]} />
-                                    <stop offset="100%" stopColor={pair[1]} />
-                                  </linearGradient>
-                                ))}
-                              </defs>
-                              <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#e5e7eb" strokeWidth="18" />
-                              {pacientesPorZona.map((z, index) => {
-                                const value = Number(z.value || 0);
-                                if (value <= 0) return null;
-                                const dash = (value / total) * circumference;
-                                const gap = Math.max(circumference - dash, 0);
-                                const offset = -accumulated;
-                                accumulated += dash;
-
-                                return (
-                                  <circle
-                                    key={z.zona}
-                                    cx={cx}
-                                    cy={cy}
-                                    r={radius}
-                                    fill="none"
-                                    stroke={`url(#patient-zona-grad-${index % PIE_COLORS.length})`}
-                                    strokeWidth="18"
-                                    strokeLinecap="round"
-                                    strokeDasharray={`${dash} ${gap}`}
-                                    strokeDashoffset={offset}
-                                    transform={`rotate(-90 ${cx} ${cy})`}
-                                  />
-                                );
-                              })}
-                              <circle cx={cx} cy={cy} r={20} fill="#ffffff" />
-                            </svg>
-                          </div>
-                          <div className="space-y-1">
-                            {pacientesPorZona.map((z, index) => (
-                              <div key={z.zona} className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span
-                                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                                    style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length][0] }}
-                                  />
-                                  <span className="text-xs text-slate-600 truncate">{z.zona}</span>
-                                </div>
-                                <span className="text-xs text-slate-700 font-medium">
-                                  {z.value} ({Math.round((z.value / total) * 100)}%)
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
+                <DashboardZonePieChart items={pacientesPorZona} gradientPrefix="patient-zone" />
               </div>
             </div>
 

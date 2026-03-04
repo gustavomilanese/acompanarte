@@ -916,7 +916,7 @@ export function Acompanantes() {
                         Aprobar
                       </button>
                     )}
-                    {viewMode === 'base' && acompanante.estado !== 'activo' && (
+                    {viewMode === 'base' ? (
                       <button
                         onClick={() => requestToggleEstado(acompanante, 'inactivo')}
                         className="px-3 py-2 rounded-lg transition-colors text-sm font-medium inline-flex items-center gap-2 bg-red-100 text-red-700 hover:bg-red-200"
@@ -925,28 +925,29 @@ export function Acompanantes() {
                         <XCircle className="w-4 h-4" />
                         Dar de baja
                       </button>
+                    ) : (
+                      <button
+                        onClick={() => requestToggleEstado(acompanante)}
+                        className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium inline-flex items-center gap-2 ${
+                          acompanante.estado === 'activo'
+                            ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                        }`}
+                        title={acompanante.estado === 'activo' ? 'Dar de baja' : 'Dar de alta'}
+                      >
+                        {acompanante.estado === 'activo' ? (
+                          <>
+                            <XCircle className="w-4 h-4" />
+                            Dar de baja
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            Dar de alta
+                          </>
+                        )}
+                      </button>
                     )}
-                    <button
-                      onClick={() => requestToggleEstado(acompanante)}
-                      className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium inline-flex items-center gap-2 ${
-                        acompanante.estado === 'activo'
-                          ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                          : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                      }`}
-                      title={acompanante.estado === 'activo' ? 'Dar de baja' : 'Dar de alta'}
-                    >
-                      {acompanante.estado === 'activo' ? (
-                        <>
-                          <XCircle className="w-4 h-4" />
-                          Dar de baja
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle className="w-4 h-4" />
-                          Dar de alta
-                        </>
-                      )}
-                    </button>
                     <button
                       onClick={() => handleOpenModal(acompanante)}
                       disabled={loadingEditId === acompanante.id}
