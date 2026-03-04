@@ -728,6 +728,263 @@ function getExtraHoursDetailKey(detail) {
   return `sig:${fecha}|${horas}|${valorHoraCobro}|${valorHoraPago}|${montoCobro}|${montoPago}|${concepto}`
 }
 
+function dedupeExtraHoursDetails(details = []) {
+  const byKey = new Map()
+  for (let idx = 0; idx < details.length; idx += 1) {
+    const normalized = normalizeExtraHoursDetail(details[idx], `det-${idx + 1}`)
+    if (!normalized) continue
+    const key = normalized.id ? `id:${String(normalized.id)}` : getExtraHoursDetailKey(normalized)
+    if (!key) continue
+    byKey.set(key, normalized)
+  }
+  return [...byKey.values()]
+}
+
+function computeExtraHoursTotals(details = []) {
+  const totals = (Array.isArray(details) ? details : []).reduce((acc, detail) => ({
+    horas: acc.horas + (Number.isFinite(detail.horas) ? Number(detail.horas) : 0),
+    montoCobro: acc.montoCobro + roundCurrency(detail.montoCobro || 0),
+    montoPago: acc.montoPago + roundCurrency(detail.montoPago || 0),
+  }), { horas: 0, montoCobro: 0, montoPago: 0 })
+
+  totals.horas = roundCurrency(totals.horas)
+  totals.montoCobro = roundCurrency(totals.montoCobro)
+  totals.montoPago = roundCurrency(totals.montoPago)
+  return totals
+}
+
+function getExtraHoursLatestDate(details = [], fallbackDate = new Date()) {
+  const validDates = (Array.isArray(details) ? details : [])
+    .map((detail) => detail?.fecha ? new Date(detail.fecha) : null)
+    .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime())
+  return validDates[0] || fallbackDate
+}
+
+function pickExtraHoursMovement(items = []) {
+  if (!Array.isArray(items) || items.length === 0) return null
+  return [...items].sort((a, b) => {
+    const detailsA = parseExtraHoursAggregateNotes(a?.notas || '')?.detalles?.length || 0
+    const detailsB = parseExtraHoursAggregateNotes(b?.notas || '')?.detalles?.length || 0
+    if (detailsA !== detailsB) return detailsB - detailsA
+
+    const pendingA = String(a?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0
+    const pendingB = String(b?.estado || '').toLowerCase() === 'pendiente' ? 1 : 0
+    if (pendingA !== pendingB) return pendingB - pendingA
+
+    const tsA = new Date(a?.updatedAt || a?.createdAt || a?.fecha || 0).getTime() || 0
+    const tsB = new Date(b?.updatedAt || b?.createdAt || b?.fecha || 0).getTime() || 0
+    return tsB - tsA
+  })[0]
+}
+
+function readExtraHoursDetailsFromMovement(movement, fallbackDate = new Date()) {
+  const aggregate = parseExtraHoursAggregateNotes(movement?.notas || '')
+  if (Array.isArray(aggregate?.detalles) && aggregate.detalles.length > 0) {
+    return dedupeExtraHoursDetails(aggregate.detalles)
+  }
+
+  if (!movement) return []
+
+  const legacyDetail = normalizeExtraHoursDetail({
+    id: null,
+    fecha: movement.fecha instanceof Date && !Number.isNaN(movement.fecha.getTime())
+      ? movement.fecha.toISOString().slice(0, 10)
+      : fallbackDate.toISOString().slice(0, 10),
+    horas: null,
+    valorHoraCobro: null,
+    valorHoraPago: null,
+    montoCobro: movement.tipo === 'cobro' ? Number(movement.monto || 0) : 0,
+    montoPago: movement.tipo === 'pago' ? Number(movement.monto || 0) : 0,
+    concepto: String(movement.notas || '').trim() || 'Registro legacy',
+    legacy: true,
+  }, `legacy-${movement.id || randomCode()}`)
+
+  return legacyDetail ? [legacyDetail] : []
+}
+
+async function getExtraHoursScopedMovements(tx, { serviceId, caregiverId, year, month }) {
+  const baseWhere = {
+    categoria: 'horas_extra',
+    serviceId,
+    year,
+    month,
+    periodType: 'month',
+    tipo: { in: ['cobro', 'pago'] },
+  }
+
+  let scopeWhere = { ...baseWhere, caregiverId: caregiverId || null }
+  let items = await tx.financeMovement.findMany({
+    where: scopeWhere,
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+  })
+
+  if (items.length === 0 && caregiverId) {
+    items = await tx.financeMovement.findMany({
+      where: { ...baseWhere, caregiverId: null },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    })
+  }
+
+  return {
+    all: items,
+    cobros: items.filter((item) => item.tipo === 'cobro'),
+    pagos: items.filter((item) => item.tipo === 'pago'),
+  }
+}
+
+async function persistExtraHoursScope(tx, {
+  service,
+  caregiver,
+  year,
+  month,
+  details,
+  registeredBy = null,
+  forcePending = false,
+}) {
+  const caregiverId = caregiver?.id || null
+  const scoped = await getExtraHoursScopedMovements(tx, {
+    serviceId: service.id,
+    caregiverId,
+    year,
+    month,
+  })
+
+  const existingCobro = pickExtraHoursMovement(scoped.cobros)
+  const existingPago = pickExtraHoursMovement(scoped.pagos)
+  const normalizedDetails = dedupeExtraHoursDetails(details)
+
+  if (normalizedDetails.length === 0) {
+    const idsToDelete = [...scoped.cobros, ...scoped.pagos].map((item) => item.id)
+    if (idsToDelete.length > 0) {
+      await tx.financeMovement.deleteMany({ where: { id: { in: idsToDelete } } })
+    }
+    return { aggregate: null, cobro: null, pago: null, deleted: true }
+  }
+
+  const totals = computeExtraHoursTotals(normalizedDetails)
+  const aggregatePayload = {
+    version: 1,
+    kind: 'extra_hours_aggregate',
+    serviceId: service.id,
+    patientId: service.pacienteId || null,
+    patientNombre: service.paciente?.nombre || null,
+    caregiverId,
+    caregiverNombre: caregiver?.nombre || null,
+    year,
+    month,
+    detalles: normalizedDetails,
+    totals,
+  }
+  const aggregateNotes = buildExtraHoursAggregateNotes(aggregatePayload)
+  const latestDate = getExtraHoursLatestDate(normalizedDetails, new Date())
+
+  const cobroEstado = forcePending ? 'pendiente' : (existingCobro?.estado || 'pendiente')
+  const pagoEstado = forcePending ? 'pendiente' : (existingPago?.estado || 'pendiente')
+  const cobroFechaPago = cobroEstado === 'pendiente' ? null : (existingCobro?.fechaPago || new Date())
+  const pagoFechaPago = pagoEstado === 'pendiente' ? null : (existingPago?.fechaPago || new Date())
+
+  const cobroData = {
+    categoria: 'horas_extra',
+    metodo: existingCobro?.metodo || 'transferencia',
+    monto: totals.montoCobro,
+    fecha: latestDate,
+    fechaPago: cobroFechaPago,
+    year,
+    month,
+    week: null,
+    periodType: 'month',
+    estado: cobroEstado,
+    registradoPor: registeredBy ?? existingCobro?.registradoPor ?? null,
+    notas: aggregateNotes,
+    patientId: service.pacienteId || null,
+    caregiverId,
+    serviceId: service.id,
+  }
+  const pagoData = {
+    categoria: 'horas_extra',
+    metodo: existingPago?.metodo || 'transferencia',
+    monto: totals.montoPago,
+    fecha: latestDate,
+    fechaPago: pagoFechaPago,
+    year,
+    month,
+    week: null,
+    periodType: 'month',
+    estado: pagoEstado,
+    registradoPor: registeredBy ?? existingPago?.registradoPor ?? null,
+    notas: aggregateNotes,
+    patientId: null,
+    caregiverId,
+    serviceId: service.id,
+  }
+
+  const cobro = existingCobro
+    ? await tx.financeMovement.update({
+      where: { id: existingCobro.id },
+      data: cobroData,
+      include: {
+        patient: { select: { id: true, nombre: true } },
+        caregiver: { select: { id: true, nombre: true } },
+        service: { select: { id: true } },
+      },
+    })
+    : await tx.financeMovement.create({
+      data: {
+        ...cobroData,
+        tipo: 'cobro',
+      },
+      include: {
+        patient: { select: { id: true, nombre: true } },
+        caregiver: { select: { id: true, nombre: true } },
+        service: { select: { id: true } },
+      },
+    })
+
+  const pago = existingPago
+    ? await tx.financeMovement.update({
+      where: { id: existingPago.id },
+      data: pagoData,
+      include: {
+        patient: { select: { id: true, nombre: true } },
+        caregiver: { select: { id: true, nombre: true } },
+        service: { select: { id: true } },
+      },
+    })
+    : await tx.financeMovement.create({
+      data: {
+        ...pagoData,
+        tipo: 'pago',
+      },
+      include: {
+        patient: { select: { id: true, nombre: true } },
+        caregiver: { select: { id: true, nombre: true } },
+        service: { select: { id: true } },
+      },
+    })
+
+  const duplicateCobroIds = scoped.cobros
+    .map((item) => item.id)
+    .filter((id) => id !== cobro.id)
+  if (duplicateCobroIds.length > 0) {
+    await tx.financeMovement.deleteMany({ where: { id: { in: duplicateCobroIds } } })
+  }
+
+  const duplicatePagoIds = scoped.pagos
+    .map((item) => item.id)
+    .filter((id) => id !== pago.id)
+  if (duplicatePagoIds.length > 0) {
+    await tx.financeMovement.deleteMany({ where: { id: { in: duplicatePagoIds } } })
+  }
+
+  return {
+    aggregate: aggregatePayload,
+    cobro: mapFinanceMovement(cobro),
+    pago: mapFinanceMovement(pago),
+    deleted: false,
+  }
+}
+
 let extraHoursNormalizationPromise = null
 let extraHoursLastNormalizedAt = 0
 const EXTRA_HOURS_NORMALIZE_INTERVAL_MS = 45 * 1000
@@ -848,7 +1105,7 @@ async function normalizeExtraHoursDuplicates({ force = false } = {}) {
             montoPago: item.tipo === 'pago' ? Number(item.monto || 0) : 0,
             concepto: String(item.notas || '').trim() || 'Registro legacy',
             legacy: true,
-          }, null)
+          }, `legacy-${item.id}`)
           if (!legacyDetail) continue
           const legacyKey = [
             'legacy',
@@ -2032,7 +2289,7 @@ app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req,
           ? fallbackDate.toISOString().slice(0, 10)
           : fecha.toISOString().slice(0, 10)
         const legacyDetail = normalizeExtraHoursDetail({
-          id: `legacy-${Date.now()}-${randomCode()}`,
+          id: `legacy-${existingCobro?.id || existingPago?.id || randomCode()}`,
           fecha: normalizedFallbackDate,
           horas: null,
           valorHoraCobro: null,
@@ -2197,6 +2454,357 @@ app.post('/api/admin/servicios-modulo/:id/extra-hours', asyncHandler(async (req,
   })
 
   res.status(201).json(result)
+}))
+
+app.put('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(async (req, res) => {
+  requireFields(req.body, ['caregiverId', 'fecha', 'horas'])
+
+  const entryId = String(req.params.entryId || '').trim()
+  if (!entryId) {
+    const error = new Error('Registro de hora extra inválido.')
+    error.status = 400
+    throw error
+  }
+
+  const caregiverId = String(req.body.caregiverId || '').trim()
+  const horas = Number(req.body.horas)
+  const fecha = new Date(req.body.fecha)
+  const valorHoraCobroInput = req.body.valorHoraCobro !== undefined
+    ? Number(req.body.valorHoraCobro)
+    : (req.body.montoCobro !== undefined && horas > 0 ? Number(req.body.montoCobro) / horas : Number.NaN)
+  const valorHoraPagoInput = req.body.valorHoraPago !== undefined
+    ? Number(req.body.valorHoraPago)
+    : (req.body.montoPago !== undefined && horas > 0 ? Number(req.body.montoPago) / horas : Number.NaN)
+
+  if (!caregiverId) {
+    const error = new Error('El cuidador es requerido.')
+    error.status = 400
+    throw error
+  }
+  if (!Number.isFinite(horas) || horas <= 0) {
+    const error = new Error('La cantidad de horas extra es inválida.')
+    error.status = 400
+    throw error
+  }
+  if (!Number.isFinite(valorHoraCobroInput) || valorHoraCobroInput < 0) {
+    const error = new Error('El valor hora de cobro es inválido.')
+    error.status = 400
+    throw error
+  }
+  if (!Number.isFinite(valorHoraPagoInput) || valorHoraPagoInput < 0) {
+    const error = new Error('El costo hora de pago es inválido.')
+    error.status = 400
+    throw error
+  }
+  if (Number.isNaN(fecha.getTime())) {
+    const error = new Error('La fecha de la hora extra es inválida.')
+    error.status = 400
+    throw error
+  }
+
+  const valorHoraCobro = roundCurrency(valorHoraCobroInput)
+  const valorHoraPago = roundCurrency(valorHoraPagoInput)
+  const montoCobro = roundCurrency(horas * valorHoraCobro)
+  const montoPago = roundCurrency(horas * valorHoraPago)
+  const concepto = String(req.body.detalle || req.body.concepto || '').trim()
+
+  await normalizeExtraHoursDuplicates({ force: true })
+
+  const result = await prisma.$transaction(async (tx) => {
+    const service = await tx.service.findUnique({
+      where: { id: req.params.id },
+      include: {
+        paciente: { select: { id: true, nombre: true } },
+        assignments: {
+          where: { caregiverId, tipo: 'caregiver', activo: true },
+          select: { id: true },
+        },
+      },
+    })
+
+    if (!service) {
+      const error = new Error('Servicio no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const caregiver = await tx.caregiver.findUnique({
+      where: { id: caregiverId },
+      select: { id: true, nombre: true },
+    })
+    if (!caregiver) {
+      const error = new Error('Cuidador no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const isAssignedCaregiver = service.cuidadorId === caregiver.id || service.assignments.length > 0
+    if (!isAssignedCaregiver) {
+      const error = new Error('El cuidador no está asignado a este servicio.')
+      error.status = 400
+      throw error
+    }
+
+    const allMovements = await tx.financeMovement.findMany({
+      where: {
+        categoria: 'horas_extra',
+        serviceId: service.id,
+        periodType: 'month',
+        tipo: { in: ['cobro', 'pago'] },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    })
+
+    let originContext = null
+    for (const movement of allMovements) {
+      const details = readExtraHoursDetailsFromMovement(movement, fecha)
+      const detailIndex = details.findIndex((detailItem) => String(detailItem.id) === entryId)
+      if (detailIndex < 0) continue
+
+      const aggregate = parseExtraHoursAggregateNotes(movement.notas || '')
+      const candidate = {
+        caregiverId: aggregate?.caregiverId || movement.caregiverId || null,
+        year: Number(aggregate?.year || movement.year || 0) || 0,
+        month: Number(aggregate?.month || movement.month || 0) || 0,
+        details,
+        detailIndex,
+      }
+      if (!originContext || candidate.details.length > originContext.details.length) {
+        originContext = candidate
+      }
+    }
+
+    if (!originContext) {
+      const error = new Error('Registro de horas extra no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const targetYear = fecha.getFullYear()
+    const targetMonth = fecha.getMonth() + 1
+    const originCaregiverId = originContext.caregiverId ?? null
+    const originYear = Number(originContext.year || targetYear)
+    const originMonth = Number(originContext.month || targetMonth)
+    const originScoped = await getExtraHoursScopedMovements(tx, {
+      serviceId: service.id,
+      caregiverId: originCaregiverId,
+      year: originYear,
+      month: originMonth,
+    })
+    const originCanonical = pickExtraHoursMovement([
+      ...originScoped.cobros,
+      ...originScoped.pagos,
+    ])
+    const originDetails = dedupeExtraHoursDetails(
+      readExtraHoursDetailsFromMovement(originCanonical, fecha)
+    )
+
+    const previousDetail = originDetails.find((detailItem) => String(detailItem.id) === entryId)
+    if (!previousDetail) {
+      const error = new Error('Registro de horas extra no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const updatedDetail = normalizeExtraHoursDetail({
+      id: entryId,
+      fecha: fecha.toISOString().slice(0, 10),
+      horas,
+      valorHoraCobro,
+      valorHoraPago,
+      montoCobro,
+      montoPago,
+      concepto,
+      createdAt: previousDetail.createdAt || new Date().toISOString(),
+      legacy: previousDetail.legacy,
+    }, entryId)
+
+    if (!updatedDetail) {
+      const error = new Error('No se pudo actualizar el registro de hora extra.')
+      error.status = 400
+      throw error
+    }
+
+    const sameScope = (
+      String(originCaregiverId || '') === String(caregiver.id || '')
+      && Number(originYear) === Number(targetYear)
+      && Number(originMonth) === Number(targetMonth)
+    )
+
+    let persisted
+    if (sameScope) {
+      const mergedDetails = originDetails.map((detailItem) => (
+        String(detailItem.id) === entryId ? updatedDetail : detailItem
+      ))
+      persisted = await persistExtraHoursScope(tx, {
+        service,
+        caregiver,
+        year: targetYear,
+        month: targetMonth,
+        details: mergedDetails,
+        registeredBy: req.body.registradoPor || null,
+        forcePending: false,
+      })
+    } else {
+      const originCaregiver = originCaregiverId
+        ? await tx.caregiver.findUnique({
+          where: { id: originCaregiverId },
+          select: { id: true, nombre: true },
+        })
+        : null
+
+      const remainingOriginDetails = originDetails.filter((detailItem) => String(detailItem.id) !== entryId)
+      await persistExtraHoursScope(tx, {
+        service,
+        caregiver: originCaregiver,
+        year: originYear,
+        month: originMonth,
+        details: remainingOriginDetails,
+        registeredBy: req.body.registradoPor || null,
+        forcePending: false,
+      })
+
+      const targetScoped = await getExtraHoursScopedMovements(tx, {
+        serviceId: service.id,
+        caregiverId: caregiver.id,
+        year: targetYear,
+        month: targetMonth,
+      })
+      const targetCanonical = pickExtraHoursMovement([
+        ...targetScoped.cobros,
+        ...targetScoped.pagos,
+      ])
+      const targetDetails = dedupeExtraHoursDetails([
+        ...readExtraHoursDetailsFromMovement(targetCanonical, fecha),
+        updatedDetail,
+      ])
+
+      persisted = await persistExtraHoursScope(tx, {
+        service,
+        caregiver,
+        year: targetYear,
+        month: targetMonth,
+        details: targetDetails,
+        registeredBy: req.body.registradoPor || null,
+        forcePending: false,
+      })
+    }
+
+    await tx.serviceEvent.create({
+      data: {
+        serviceId: service.id,
+        tipo: 'assignment_changed',
+        nota: `Hora extra editada: ${caregiver.nombre} · ${targetMonth}/${targetYear}`,
+      },
+    })
+
+    return persisted
+  })
+
+  res.json(result)
+}))
+
+app.delete('/api/admin/servicios-modulo/:id/extra-hours/:entryId', asyncHandler(async (req, res) => {
+  const entryId = String(req.params.entryId || '').trim()
+  if (!entryId) {
+    const error = new Error('Registro de hora extra inválido.')
+    error.status = 400
+    throw error
+  }
+
+  await normalizeExtraHoursDuplicates({ force: true })
+
+  const result = await prisma.$transaction(async (tx) => {
+    const service = await tx.service.findUnique({
+      where: { id: req.params.id },
+      include: {
+        paciente: { select: { id: true, nombre: true } },
+      },
+    })
+    if (!service) {
+      const error = new Error('Servicio no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const allMovements = await tx.financeMovement.findMany({
+      where: {
+        categoria: 'horas_extra',
+        serviceId: service.id,
+        periodType: 'month',
+        tipo: { in: ['cobro', 'pago'] },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    })
+
+    let originContext = null
+    for (const movement of allMovements) {
+      const details = readExtraHoursDetailsFromMovement(movement, new Date())
+      if (!details.some((detailItem) => String(detailItem.id) === entryId)) continue
+      const aggregate = parseExtraHoursAggregateNotes(movement.notas || '')
+      const candidate = {
+        caregiverId: aggregate?.caregiverId || movement.caregiverId || null,
+        year: Number(aggregate?.year || movement.year || 0) || 0,
+        month: Number(aggregate?.month || movement.month || 0) || 0,
+      }
+      if (!originContext) originContext = candidate
+    }
+
+    if (!originContext) {
+      const error = new Error('Registro de horas extra no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const scoped = await getExtraHoursScopedMovements(tx, {
+      serviceId: service.id,
+      caregiverId: originContext.caregiverId,
+      year: originContext.year,
+      month: originContext.month,
+    })
+    const canonical = pickExtraHoursMovement([
+      ...scoped.cobros,
+      ...scoped.pagos,
+    ])
+    const details = dedupeExtraHoursDetails(
+      readExtraHoursDetailsFromMovement(canonical, new Date())
+    )
+    const remainingDetails = details.filter((detailItem) => String(detailItem.id) !== entryId)
+    if (remainingDetails.length === details.length) {
+      const error = new Error('Registro de horas extra no encontrado.')
+      error.status = 404
+      throw error
+    }
+
+    const caregiver = originContext.caregiverId
+      ? await tx.caregiver.findUnique({
+        where: { id: originContext.caregiverId },
+        select: { id: true, nombre: true },
+      })
+      : null
+
+    const persisted = await persistExtraHoursScope(tx, {
+      service,
+      caregiver,
+      year: originContext.year,
+      month: originContext.month,
+      details: remainingDetails,
+      registeredBy: null,
+      forcePending: false,
+    })
+
+    await tx.serviceEvent.create({
+      data: {
+        serviceId: service.id,
+        tipo: 'assignment_changed',
+        nota: `Hora extra eliminada · ${originContext.month}/${originContext.year}`,
+      },
+    })
+
+    return persisted
+  })
+
+  res.json(result)
 }))
 
 app.post('/api/admin/servicios-modulo/:id/assignments', asyncHandler(async (req, res) => {

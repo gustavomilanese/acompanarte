@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Plus, Clock3, MoreVertical } from 'lucide-react';
+import { ChevronLeft, Plus, Clock3, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/components/Toast';
 import { Card, CardContent } from '@/components/Card';
@@ -89,6 +89,12 @@ function formatMonthYearLabel(year, month) {
   return `${prettyMonth} ${y}`;
 }
 
+function roundMoney(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+}
+
 function decodeBase64ToText(base64Text) {
   const normalized = String(base64Text || '').replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
@@ -123,6 +129,8 @@ function normalizeExtraHoursDetails(details) {
       const horas = Number(item.horas);
       const montoCobro = Number(item.montoCobro);
       const montoPago = Number(item.montoPago);
+      const valorHoraCobro = Number(item.valorHoraCobro);
+      const valorHoraPago = Number(item.valorHoraPago);
       const fechaValue = item.fecha ? new Date(item.fecha) : null;
       const fecha = fechaValue && !Number.isNaN(fechaValue.getTime())
         ? fechaValue.toISOString().slice(0, 10)
@@ -131,9 +139,13 @@ function normalizeExtraHoursDetails(details) {
         id: String(item.id || `det-${idx + 1}`),
         fecha,
         horas: Number.isFinite(horas) ? horas : null,
+        valorHoraCobro: Number.isFinite(valorHoraCobro) ? valorHoraCobro : null,
+        valorHoraPago: Number.isFinite(valorHoraPago) ? valorHoraPago : null,
         montoCobro: Number.isFinite(montoCobro) ? montoCobro : 0,
         montoPago: Number.isFinite(montoPago) ? montoPago : 0,
         concepto: String(item.concepto || '').trim(),
+        createdAt: item.createdAt ? String(item.createdAt) : null,
+        legacy: Boolean(item.legacy),
       };
     })
     .filter(Boolean);
@@ -227,10 +239,10 @@ export function Servicios() {
   const [assignmentModalOpen, setAssignmentModalOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [pendingDetailType, setPendingDetailType] = useState('');
-  const [extraHoursExpandedKey, setExtraHoursExpandedKey] = useState('');
   const [assignmentsOpen, setAssignmentsOpen] = useState(false);
   const [extraHoursOpen, setExtraHoursOpen] = useState(false);
   const [extraHoursMonthFilter, setExtraHoursMonthFilter] = useState('all');
+  const [extraHoursEditingId, setExtraHoursEditingId] = useState('');
 
   const cuidadoresAsignadosEnServicio = useMemo(() => {
     if (!selectedDetail) return [];
@@ -300,10 +312,10 @@ export function Servicios() {
   useEffect(() => {
     setActionsMenuOpen(false);
     setPendingDetailType('');
-    setExtraHoursExpandedKey('');
     setAssignmentsOpen(false);
     setExtraHoursOpen(false);
     setExtraHoursMonthFilter('all');
+    setExtraHoursEditingId('');
   }, [selectedId]);
 
   useEffect(() => {
@@ -317,6 +329,7 @@ export function Servicios() {
   useEffect(() => {
     if (extraHoursOpen) return;
     setExtraHoursEditorOpen(false);
+    setExtraHoursEditingId('');
   }, [extraHoursOpen]);
 
   const serviciosFiltrados = useMemo(() => {
@@ -390,7 +403,20 @@ export function Servicios() {
             return getTimestamp(b) - getTimestamp(a);
           })[0] || canonicalCobro;
 
-        const details = Array.isArray(detailSource?.info?.details) ? detailSource.info.details : [];
+        const detailItems = Array.isArray(detailSource?.info?.details) ? detailSource.info.details : [];
+        const legacyFallbackDetail = {
+          id: `legacy-${canonicalCobro?.mov?.id || group.key}`,
+          fecha: canonicalCobro?.mov?.fecha ? new Date(canonicalCobro.mov.fecha).toISOString().slice(0, 10) : null,
+          horas: Number.isFinite(Number(detailSource?.info?.totalHoras)) ? Number(detailSource.info.totalHoras) : null,
+          valorHoraCobro: null,
+          valorHoraPago: null,
+          montoCobro: Number(canonicalCobro?.mov?.monto || 0),
+          montoPago: Number(canonicalPago?.mov?.monto || 0),
+          concepto: detailSource?.info?.lastDetail?.concepto || 'Registro legacy',
+          createdAt: canonicalCobro?.mov?.createdAt || null,
+          legacy: true,
+        };
+        const details = detailItems.length > 0 ? detailItems : [legacyFallbackDetail];
         const detailTotals = details.reduce((acc, detail) => ({
           horas: acc.horas + (Number.isFinite(Number(detail?.horas)) ? Number(detail.horas) : 0),
           montoCobro: acc.montoCobro + Number(detail?.montoCobro || 0),
@@ -483,6 +509,95 @@ export function Servicios() {
     if (!exists) setExtraHoursMonthFilter('all');
   }, [extraHoursMonthFilter, extraHoursPeriodOptions]);
 
+  const extraHoursDetailRows = useMemo(() => {
+    return extraHoursVisible
+      .flatMap((group) => {
+        const year = Number(group.info.year || 0);
+        const month = Number(group.info.month || 0);
+        const caregiverId = group.info.caregiverId || group.pago?.caregiverId || group.cobro?.caregiverId || '';
+        const caregiverNombre = group.info.caregiverNombre || group.pago?.caregiver?.nombre || group.cobro?.caregiver?.nombre || 'Sin cuidador';
+
+        return (group.info.details || []).map((detail) => {
+          const horas = Number.isFinite(Number(detail.horas)) ? Number(detail.horas) : 0;
+          const valorHoraCobro = Number.isFinite(Number(detail.valorHoraCobro)) ? Number(detail.valorHoraCobro) : null;
+          const valorHoraPago = Number.isFinite(Number(detail.valorHoraPago)) ? Number(detail.valorHoraPago) : null;
+          const montoCobro = valorHoraCobro !== null
+            ? roundMoney(horas * valorHoraCobro)
+            : roundMoney(detail.montoCobro || 0);
+          const montoPago = valorHoraPago !== null
+            ? roundMoney(horas * valorHoraPago)
+            : roundMoney(detail.montoPago || 0);
+
+          return {
+            id: String(detail.id),
+            fecha: detail.fecha || null,
+            caregiverId,
+            caregiverNombre,
+            year,
+            month,
+            periodValue: year && month ? `${year}-${String(month).padStart(2, '0')}` : 'n/a',
+            periodLabel: year && month ? formatMonthYearLabel(year, month) : '-',
+            horas,
+            valorHoraCobro,
+            valorHoraPago,
+            montoCobro,
+            montoPago,
+            concepto: detail.concepto || '',
+            createdAt: detail.createdAt || null,
+            cobroEstado: String(group.cobro?.estado || 'pendiente').toLowerCase(),
+            pagoEstado: String(group.pago?.estado || 'pendiente').toLowerCase(),
+            cobroId: group.cobro?.id || null,
+            pagoId: group.pago?.id || null,
+          };
+        });
+      })
+      .sort((a, b) => {
+        const aDate = new Date(a.fecha || a.createdAt || 0).getTime();
+        const bDate = new Date(b.fecha || b.createdAt || 0).getTime();
+        return bDate - aDate;
+      });
+  }, [extraHoursVisible]);
+
+  const extraHoursAccumulatedRows = useMemo(() => {
+    const grouped = new Map();
+    for (const row of extraHoursDetailRows) {
+      const key = `${row.caregiverId || 'sin-cuidador'}:${row.periodValue}`;
+      const existing = grouped.get(key) || {
+        key,
+        caregiverId: row.caregiverId || '',
+        caregiverNombre: row.caregiverNombre || 'Sin cuidador',
+        year: row.year || 0,
+        month: row.month || 0,
+        periodLabel: row.periodLabel || '-',
+        horas: 0,
+        montoCobro: 0,
+        montoPago: 0,
+        registros: 0,
+        cobroEstado: 'pagado',
+        pagoEstado: 'pagado',
+      };
+      existing.horas += Number(row.horas || 0);
+      existing.montoCobro += Number(row.montoCobro || 0);
+      existing.montoPago += Number(row.montoPago || 0);
+      existing.registros += 1;
+      if (row.cobroEstado === 'pendiente') existing.cobroEstado = 'pendiente';
+      if (row.pagoEstado === 'pendiente') existing.pagoEstado = 'pendiente';
+      grouped.set(key, existing);
+    }
+    return [...grouped.values()]
+      .map((item) => ({
+        ...item,
+        horas: roundMoney(item.horas),
+        montoCobro: roundMoney(item.montoCobro),
+        montoPago: roundMoney(item.montoPago),
+      }))
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        if (a.month !== b.month) return b.month - a.month;
+        return a.caregiverNombre.localeCompare(b.caregiverNombre, 'es');
+      });
+  }, [extraHoursDetailRows]);
+
   const extraHoursPreview = useMemo(() => {
     const horas = Number(extraHoursForm.horas);
     const valorHoraCobro = Number(extraHoursForm.valorHoraCobro);
@@ -531,13 +646,13 @@ export function Servicios() {
   );
 
   const extraHoursQuickStats = useMemo(() => {
-    return extraHoursVisible.reduce((acc, item) => ({
-      horas: acc.horas + Number(item.info.totalHoras || 0),
-      cobro: acc.cobro + Number(item.cobro?.monto || 0),
-      pago: acc.pago + Number(item.pago?.monto || 0),
+    return extraHoursDetailRows.reduce((acc, row) => ({
+      horas: acc.horas + Number(row.horas || 0),
+      cobro: acc.cobro + Number(row.montoCobro || 0),
+      pago: acc.pago + Number(row.montoPago || 0),
       rows: acc.rows + 1,
     }), { horas: 0, cobro: 0, pago: 0, rows: 0 });
-  }, [extraHoursVisible]);
+  }, [extraHoursDetailRows]);
 
   const refreshAll = async () => {
     await loadData();
@@ -553,6 +668,7 @@ export function Servicios() {
       valorHoraPago: '',
       notas: '',
     });
+    setExtraHoursEditingId('');
   };
 
   const resetAssignmentForm = () => {
@@ -602,20 +718,58 @@ export function Servicios() {
         return;
       }
 
-      await adminApi.createServicioExtraHours(selectedDetail.id, {
+      const payload = {
         caregiverId: extraHoursForm.caregiverId,
         fecha: `${extraHoursForm.fecha}T12:00:00`,
         horas: Number(extraHoursForm.horas),
         valorHoraCobro: Number(extraHoursForm.valorHoraCobro),
         valorHoraPago: Number(extraHoursForm.valorHoraPago),
         detalle: extraHoursForm.notas || '',
-      });
-      showSuccess('Hora extra acumulada: se actualizó cobro y pago pendientes del mes');
+      };
+
+      if (extraHoursEditingId) {
+        await adminApi.updateServicioExtraHours(selectedDetail.id, extraHoursEditingId, payload);
+        showSuccess('Registro de hora extra actualizado');
+      } else {
+        await adminApi.createServicioExtraHours(selectedDetail.id, payload);
+        showSuccess('Hora extra acumulada: se actualizó cobro y pago pendientes del mes');
+      }
       setExtraHoursEditorOpen(false);
       resetExtraHoursForm();
       await refreshAll();
     } catch (error) {
       showError(error.message || 'No se pudo registrar la hora extra');
+    }
+  };
+
+  const startExtraHoursEdit = (row) => {
+    setExtraHoursEditingId(row.id);
+    setExtraHoursEditorOpen(true);
+    setExtraHoursForm({
+      fecha: row.fecha || new Date().toISOString().slice(0, 10),
+      caregiverId: row.caregiverId || '',
+      horas: row.horas ? String(row.horas) : '',
+      valorHoraCobro: row.valorHoraCobro !== null && row.valorHoraCobro !== undefined ? String(row.valorHoraCobro) : '',
+      valorHoraPago: row.valorHoraPago !== null && row.valorHoraPago !== undefined ? String(row.valorHoraPago) : '',
+      notas: row.concepto || '',
+    });
+  };
+
+  const deleteExtraHoursDetail = async (row) => {
+    if (!selectedDetail) return;
+    const ok = window.confirm('¿Querés eliminar este registro de hora extra?');
+    if (!ok) return;
+
+    try {
+      await adminApi.deleteServicioExtraHours(selectedDetail.id, row.id);
+      if (extraHoursEditingId && extraHoursEditingId === row.id) {
+        resetExtraHoursForm();
+        setExtraHoursEditorOpen(false);
+      }
+      showSuccess('Registro de hora extra eliminado');
+      await refreshAll();
+    } catch (error) {
+      showError(error.message || 'No se pudo eliminar la hora extra');
     }
   };
 
@@ -994,7 +1148,11 @@ export function Servicios() {
                               type="button"
                               onClick={() => {
                                 setExtraHoursEditorOpen((prev) => !prev);
-                                if (extraHoursEditorOpen) resetExtraHoursForm();
+                                if (extraHoursEditorOpen) {
+                                  resetExtraHoursForm();
+                                } else {
+                                  setExtraHoursEditingId('');
+                                }
                               }}
                               className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
                               title={extraHoursEditorOpen ? 'Cerrar carga de horas extra' : 'Agregar horas extra'}
@@ -1019,33 +1177,17 @@ export function Servicios() {
                           <p className="text-sm font-semibold text-amber-700">{Number(extraHoursQuickStats.horas || 0).toLocaleString('es-AR')} hs</p>
                         </div>
                         <div className="px-3 py-2 rounded-lg border border-emerald-100 bg-emerald-50/70">
-                          <p className="text-[11px] text-slate-500">Pendiente de cobro (horas extra)</p>
+                          <p className="text-[11px] text-slate-500">Pendiente de cobro (horas x valor hora)</p>
                           <p className="text-sm font-semibold text-emerald-700">${Number(extraHoursQuickStats.cobro || 0).toLocaleString('es-AR')}</p>
                         </div>
                         <div className="px-3 py-2 rounded-lg border border-violet-100 bg-violet-50/70">
-                          <p className="text-[11px] text-slate-500">Pendiente de pago (horas extra)</p>
+                          <p className="text-[11px] text-slate-500">Pendiente de pago (horas x costo hora)</p>
                           <p className="text-sm font-semibold text-violet-700">${Number(extraHoursQuickStats.pago || 0).toLocaleString('es-AR')}</p>
                         </div>
                       </div>
 
                       {extraHoursOpen && (
                         <>
-                      <div className="flex items-center justify-end gap-2 mb-3">
-                        <label htmlFor="extra-hours-period-filter" className="text-xs text-slate-500">Período</label>
-                        <select
-                          id="extra-hours-period-filter"
-                          value={extraHoursMonthFilter}
-                          onChange={(e) => setExtraHoursMonthFilter(e.target.value)}
-                          className="h-8 px-2.5 rounded-md border border-slate-200 bg-white text-xs text-slate-700"
-                        >
-                          <option value="all">Todos</option>
-                          {extraHoursPeriodOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {formatMonthYearLabel(option.year, option.month)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
                       <p className="text-xs text-slate-500 mb-3">Se acumula por cuidador y mes. El total se calcula como horas x valor hora (cobro) y horas x costo hora (pago).</p>
 
                       {extraHoursEditorOpen && (
@@ -1108,9 +1250,25 @@ export function Servicios() {
                                 className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
                                 placeholder="Detalle opcional"
                               />
-                              <Button type="submit" size="sm" className="h-full">
-                                Guardar hora extra
-                              </Button>
+                              <div className="grid grid-cols-2 gap-2">
+                                {extraHoursEditingId ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-full border border-slate-300"
+                                    onClick={() => {
+                                      resetExtraHoursForm();
+                                      setExtraHoursEditorOpen(false);
+                                    }}
+                                  >
+                                    Cancelar
+                                  </Button>
+                                ) : null}
+                                <Button type="submit" size="sm" className={`h-full ${extraHoursEditingId ? '' : 'col-span-2'}`}>
+                                  {extraHoursEditingId ? 'Guardar cambios' : 'Guardar hora extra'}
+                                </Button>
+                              </div>
                             </div>
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -1124,106 +1282,136 @@ export function Servicios() {
                         </form>
                       )}
 
-                      <div className="rounded-xl border border-amber-100 overflow-hidden bg-white mb-5">
+                      <div className="rounded-xl border border-amber-100 overflow-hidden bg-white mb-4">
                         <table className="w-full text-sm">
                           <thead className="bg-amber-50">
                             <tr className="text-left text-slate-600">
                               <th className="px-3 py-2 font-semibold">Período</th>
                               <th className="px-3 py-2 font-semibold">Cuidador</th>
                               <th className="px-3 py-2 font-semibold">Horas acumuladas</th>
-                              <th className="px-3 py-2 font-semibold">Cobro acumulado</th>
-                              <th className="px-3 py-2 font-semibold">Pago acumulado</th>
+                              <th className="px-3 py-2 font-semibold">Cobro pendiente</th>
+                              <th className="px-3 py-2 font-semibold">Pago pendiente</th>
+                              <th className="px-3 py-2 font-semibold">Registros</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {extraHoursAccumulatedRows.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="px-3 py-4 text-center text-slate-500">Sin acumulados en el período seleccionado.</td>
+                              </tr>
+                            )}
+                            {extraHoursAccumulatedRows.map((row) => (
+                              <tr key={row.key} className="border-t border-amber-100">
+                                <td className="px-3 py-2 text-slate-600">{row.periodLabel}</td>
+                                <td className="px-3 py-2 text-slate-600">{row.caregiverNombre}</td>
+                                <td className="px-3 py-2 text-slate-700">{Number(row.horas || 0).toLocaleString('es-AR')} hs</td>
+                                <td className="px-3 py-2 text-slate-700">${Number(row.montoCobro || 0).toLocaleString('es-AR')}</td>
+                                <td className="px-3 py-2 text-slate-700">${Number(row.montoPago || 0).toLocaleString('es-AR')}</td>
+                                <td className="px-3 py-2 text-slate-600">{row.registros}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs text-slate-500">Registros cargados (uno por uno).</p>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/admin/finanzas?tab=cobros&estado=pendiente')}
+                          className="text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                        >
+                          Gestionar en finanzas
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-amber-100 overflow-x-auto bg-white mb-5">
+                        <table className="w-full text-sm min-w-[980px]">
+                          <thead className="bg-amber-50">
+                            <tr className="text-left text-slate-600">
+                              <th className="px-3 py-2 font-semibold">
+                                <div className="flex items-center gap-2">
+                                  <span>Período</span>
+                                  <select
+                                    value={extraHoursMonthFilter}
+                                    onChange={(e) => setExtraHoursMonthFilter(e.target.value)}
+                                    className="h-7 px-2 rounded-md border border-slate-200 bg-white text-xs text-slate-700 font-normal"
+                                  >
+                                    <option value="all">Todos</option>
+                                    {extraHoursPeriodOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {formatMonthYearLabel(option.year, option.month)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </th>
+                              <th className="px-3 py-2 font-semibold">Cuidador</th>
+                              <th className="px-3 py-2 font-semibold">Fecha</th>
+                              <th className="px-3 py-2 font-semibold">Horas</th>
+                              <th className="px-3 py-2 font-semibold">Valor hora cobro</th>
+                              <th className="px-3 py-2 font-semibold">Costo hora pago</th>
+                              <th className="px-3 py-2 font-semibold">Cobro pendiente</th>
+                              <th className="px-3 py-2 font-semibold">Pago pendiente</th>
                               <th className="px-3 py-2 font-semibold">Estado cobro</th>
                               <th className="px-3 py-2 font-semibold">Estado pago</th>
+                              <th className="px-3 py-2 font-semibold">Concepto</th>
                               <th className="px-3 py-2 font-semibold text-right">Acciones</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {extraHoursVisible.length === 0 && (
+                            {extraHoursDetailRows.length === 0 && (
                               <tr>
-                                <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
+                                <td colSpan={12} className="px-3 py-4 text-center text-slate-500">Sin horas extra registradas.</td>
                               </tr>
                             )}
-                            {extraHoursVisible.map((item) => {
-                              const hasPago = Boolean(item.pago?.id);
-                              const periodLabel = item.info.month && item.info.year
-                                ? formatMonthYearLabel(item.info.year, item.info.month)
-                                : formatPeriodo(item.cobro);
-                              const hasDetails = item.info.details.length > 0;
-                              const isExpanded = extraHoursExpandedKey === item.ref;
-                              return (
-                                <React.Fragment key={item.ref}>
-                                <tr className="border-t border-amber-100">
-                                  <td className="px-3 py-2 text-slate-600">{periodLabel}</td>
-                                  <td className="px-3 py-2 text-slate-600">{item.info.caregiverNombre || item.pago?.caregiver?.nombre || 'Sin cuidador'}</td>
-                                  <td className="px-3 py-2">{item.info.totalHoras ? `${item.info.totalHoras} hs` : '-'}</td>
-                                  <td className="px-3 py-2">${Number(item.cobro.monto || 0).toLocaleString('es-AR')}</td>
-                                  <td className="px-3 py-2">{hasPago ? `$${Number(item.pago?.monto || 0).toLocaleString('es-AR')}` : '-'}</td>
-                                  <td className="px-3 py-2">
-                                    <span className={`text-xs px-2 py-1 rounded-full border ${
-                                      String(item.cobro.estado).toLowerCase() === 'pagado'
-                                        ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                                        : 'bg-amber-100 text-amber-700 border-amber-200'
-                                    }`}>
-                                      {String(item.cobro.estado).toLowerCase() === 'pagado' ? 'Pagado' : 'Pendiente'}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    {hasPago ? (
-                                      <span className={`text-xs px-2 py-1 rounded-full border ${
-                                        String(item.pago?.estado || 'pendiente').toLowerCase() === 'pagado'
-                                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                                          : 'bg-amber-100 text-amber-700 border-amber-200'
-                                      }`}>
-                                        {String(item.pago?.estado || 'pendiente').toLowerCase() === 'pagado' ? 'Pagado' : 'Pendiente'}
-                                      </span>
-                                    ) : (
-                                      <span className="text-xs px-2 py-1 rounded-full border bg-slate-100 text-slate-600 border-slate-200">
-                                        Sin orden
-                                      </span>
-                                    )}
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (!hasDetails) return;
-                                          setExtraHoursExpandedKey((prev) => (prev === item.ref ? '' : item.ref));
-                                        }}
-                                        className="text-xs px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-                                        disabled={!hasDetails}
-                                      >
-                                        {isExpanded ? 'Ocultar detalle' : '+ Detalle'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => navigate('/admin/finanzas?tab=cobros&estado=pendiente')}
-                                        className="text-xs px-2.5 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                                      >
-                                        Gestionar en finanzas
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                                {isExpanded && (
-                                  <tr className="border-t border-amber-100 bg-amber-50/30">
-                                    <td colSpan={8} className="px-3 py-2">
-                                      <div className="space-y-1">
-                                        {item.info.details.map((detailItem) => (
-                                          <div key={detailItem.id} className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
-                                            <span>{detailItem.fecha ? format(new Date(detailItem.fecha), 'dd/MM/yyyy') : '-'}</span>
-                                            <span>· {Number.isFinite(detailItem.horas) ? `${detailItem.horas} hs` : '-'}</span>
-                                            <span>· {detailItem.concepto || 'Sin concepto'}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                                </React.Fragment>
-                              );
-                            })}
+                            {extraHoursDetailRows.map((row) => (
+                              <tr key={row.id} className="border-t border-amber-100">
+                                <td className="px-3 py-2 text-slate-600">{row.periodLabel}</td>
+                                <td className="px-3 py-2 text-slate-700">{row.caregiverNombre}</td>
+                                <td className="px-3 py-2 text-slate-600">
+                                  {row.fecha ? format(new Date(row.fecha), 'dd/MM/yyyy') : '-'}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">{Number(row.horas || 0).toLocaleString('es-AR')} hs</td>
+                                <td className="px-3 py-2 text-slate-600">
+                                  {row.valorHoraCobro !== null ? `$${Number(row.valorHoraCobro).toLocaleString('es-AR')}` : '-'}
+                                </td>
+                                <td className="px-3 py-2 text-slate-600">
+                                  {row.valorHoraPago !== null ? `$${Number(row.valorHoraPago).toLocaleString('es-AR')}` : '-'}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">${Number(row.montoCobro || 0).toLocaleString('es-AR')}</td>
+                                <td className="px-3 py-2 text-slate-700">${Number(row.montoPago || 0).toLocaleString('es-AR')}</td>
+                                <td className={`px-3 py-2 text-xs font-medium ${row.cobroEstado === 'pagado' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                  {row.cobroEstado === 'pagado' ? 'Pagado' : 'Pendiente'}
+                                </td>
+                                <td className={`px-3 py-2 text-xs font-medium ${row.pagoEstado === 'pagado' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                  {row.pagoEstado === 'pagado' ? 'Pagado' : 'Pendiente'}
+                                </td>
+                                <td className="px-3 py-2 text-slate-600">{row.concepto || '-'}</td>
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => startExtraHoursEdit(row)}
+                                      className="inline-flex items-center justify-center h-7 w-7 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                                      title="Editar"
+                                      aria-label="Editar registro"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteExtraHoursDetail(row)}
+                                      className="inline-flex items-center justify-center h-7 w-7 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                                      title="Eliminar"
+                                      aria-label="Eliminar registro"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>

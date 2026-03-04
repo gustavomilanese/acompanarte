@@ -345,6 +345,17 @@ export const adminApi = {
       body: JSON.stringify(payload),
     })
   },
+  updateServicioExtraHours(id, extraHourId, payload) {
+    return request(`/api/admin/servicios-modulo/${id}/extra-hours/${extraHourId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteServicioExtraHours(id, extraHourId) {
+    return request(`/api/admin/servicios-modulo/${id}/extra-hours/${extraHourId}`, {
+      method: 'DELETE',
+    })
+  },
   getFinanzasResumen() {
     return request('/api/admin/finanzas/resumen')
   },
