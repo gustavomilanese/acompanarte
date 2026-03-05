@@ -262,15 +262,6 @@ export function Login() {
           </div>
         </div>
 
-        {/* Test credentials */}
-        <div className="max-w-sm mx-auto mt-6 px-4">
-          <p className="text-xs text-dark-400 text-center mb-2">Datos de prueba:</p>
-          <div className="text-xs text-dark-300 text-center space-y-1">
-            <p><strong>Acompañante:</strong> maria@ejemplo.com / 1234</p>
-            <p><strong>Familiar:</strong> 987654</p>
-            <p><strong>Admin:</strong> admin@acompanarte.online / admin123</p>
-          </div>
-        </div>
       </div>
     </div>
   );

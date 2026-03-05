@@ -8,6 +8,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model AdminUser {
+  id           String    @id @default(cuid())
+  nombre       String
+  email        String    @unique
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  rol          String    @default("admin")
+  estado       String    @default("activo")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("admin_users")
+}
+
 model Caregiver {
   id             String    @id @default(cuid())
   nombre         String

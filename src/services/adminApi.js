@@ -241,6 +241,35 @@ export const adminApi = {
       cloneResponse: false,
     })
   },
+  getAdminUsers() {
+    return request('/api/admin/usuarios', {
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
+  createAdminUser(payload) {
+    return request('/api/admin/usuarios', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
+  updateAdminUser(id, payload) {
+    return request(`/api/admin/usuarios/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
+  deleteAdminUser(id) {
+    return request(`/api/admin/usuarios/${id}`, {
+      method: 'DELETE',
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
   setAdminApiToken(token) {
     if (typeof window === 'undefined' || !window.localStorage) return
     const normalized = String(token || '').trim()

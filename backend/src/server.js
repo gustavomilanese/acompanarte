@@ -106,13 +106,18 @@ const ADMIN_SESSION_SECRET_RAW = String(process.env.ADMIN_SESSION_SECRET || '').
 const ADMIN_SESSION_SECRET = ADMIN_SESSION_SECRET_RAW || crypto.randomBytes(32).toString('hex')
 const ADMIN_SESSION_SECRET_IS_EPHEMERAL = !ADMIN_SESSION_SECRET_RAW
 const ADMIN_API_KEYS = parseAdminApiKeys(process.env.ADMIN_API_KEY, process.env.ADMIN_API_KEYS)
-const ADMIN_LOGIN_USERS = resolveAdminLoginUsers()
+const BOOTSTRAP_ADMIN = resolveBootstrapAdminCredentials()
 const ADMIN_AUTH_OPEN_PATHS = new Set([
   '/auth/login',
   '/auth/me',
   '/auth/logout',
 ])
 const adminSessionStore = new Map()
+const ADMIN_USER_PASSWORD_HASH_ITERATIONS = 100_000
+const ADMIN_USER_PASSWORD_HASH_KEYLEN = 64
+const ADMIN_USER_PASSWORD_HASH_DIGEST = 'sha512'
+const ADMIN_USER_ALLOWED_ROLES = new Set(['admin', 'superadmin'])
+const ADMIN_USER_ALLOWED_STATES = new Set(['activo', 'inactivo'])
 
 app.use(cors({
   origin(origin, callback) {
@@ -143,29 +148,29 @@ function parseAdminApiKeys(...inputs) {
   return [...new Set(entries)]
 }
 
-function resolveAdminLoginUsers() {
+function resolveBootstrapAdminCredentials() {
   const configuredEmail = sanitizeEmail(process.env.ADMIN_LOGIN_EMAIL || '')
   const configuredPassword = String(process.env.ADMIN_LOGIN_PASSWORD || '').trim()
   const configuredName = String(process.env.ADMIN_LOGIN_NAME || 'Administrador').trim() || 'Administrador'
   const configuredRole = normalizeAdminRole(process.env.ADMIN_LOGIN_ROLE || 'superadmin')
 
   if (configuredEmail && configuredPassword) {
-    return [{
+    return {
       email: configuredEmail,
       password: configuredPassword,
       nombre: configuredName,
       rol: configuredRole,
       source: 'env',
-    }]
+    }
   }
 
-  return [{
+  return {
     email: 'admin@acompanarte.online',
     password: 'admin123',
     nombre: 'Administrador',
     rol: 'superadmin',
     source: 'fallback',
-  }]
+  }
 }
 
 function parseCookies(req) {
@@ -391,6 +396,14 @@ function requireAdminAuth(req, res, next) {
 }
 
 app.use('/api/admin', requireAdminAuth)
+
+function requireSuperadmin(req, res, next) {
+  if (normalizeAdminRole(req.adminUser?.rol || 'admin') !== 'superadmin') {
+    res.status(403).json({ error: 'Solo superadmin puede gestionar usuarios.' })
+    return
+  }
+  next()
+}
 
 function mapCaregiver(item) {
   return {
@@ -869,6 +882,10 @@ let caregiverCvColumnEnsured = false
 const MIN_FINANCE_NOTAS_SUPPORTED_CHARS = 200_000
 let financeNotasColumnEnsurePromise = null
 let financeNotasColumnEnsured = false
+let adminUsersTableEnsurePromise = null
+let adminUsersTableEnsured = false
+let bootstrapAdminEnsurePromise = null
+let bootstrapAdminEnsured = false
 
 async function ensureCaregiverCvArchivoColumnCapacity({ force = false } = {}) {
   if (!force && caregiverCvColumnEnsured) return
@@ -954,6 +971,306 @@ async function ensureFinanceMovementNotasColumnCapacity({ force = false } = {}) 
     })
 
   await financeNotasColumnEnsurePromise
+}
+
+function hashAdminUserPassword(rawPassword = '') {
+  const password = String(rawPassword || '')
+  const salt = crypto.randomBytes(16).toString('hex')
+  const derived = crypto
+    .pbkdf2Sync(
+      password,
+      salt,
+      ADMIN_USER_PASSWORD_HASH_ITERATIONS,
+      ADMIN_USER_PASSWORD_HASH_KEYLEN,
+      ADMIN_USER_PASSWORD_HASH_DIGEST,
+    )
+    .toString('hex')
+
+  return [
+    'pbkdf2',
+    String(ADMIN_USER_PASSWORD_HASH_ITERATIONS),
+    ADMIN_USER_PASSWORD_HASH_DIGEST,
+    salt,
+    derived,
+  ].join('$')
+}
+
+function verifyAdminUserPassword(rawPassword = '', storedHash = '') {
+  const value = String(storedHash || '')
+  const parts = value.split('$')
+
+  if (parts.length !== 5 || parts[0] !== 'pbkdf2') {
+    return secureTextEquals(String(rawPassword || ''), value)
+  }
+
+  const iterations = Number.parseInt(parts[1], 10)
+  const digest = parts[2] || ADMIN_USER_PASSWORD_HASH_DIGEST
+  const salt = parts[3] || ''
+  const hash = parts[4] || ''
+  if (!salt || !hash || !Number.isInteger(iterations) || iterations <= 0) return false
+
+  const computed = crypto
+    .pbkdf2Sync(
+      String(rawPassword || ''),
+      salt,
+      iterations,
+      Buffer.from(hash, 'hex').length || ADMIN_USER_PASSWORD_HASH_KEYLEN,
+      digest,
+    )
+    .toString('hex')
+
+  return secureTextEquals(computed, hash)
+}
+
+function normalizeAdminUserRole(value = 'admin') {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (ADMIN_USER_ALLOWED_ROLES.has(normalized)) return normalized
+  return 'admin'
+}
+
+function normalizeAdminUserState(value = 'activo') {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (ADMIN_USER_ALLOWED_STATES.has(normalized)) return normalized
+  return 'activo'
+}
+
+function mapAdminUser(item) {
+  return {
+    id: item.id,
+    nombre: item.nombre,
+    email: item.email,
+    rol: normalizeAdminUserRole(item.rol || 'admin'),
+    estado: normalizeAdminUserState(item.estado || 'activo'),
+    lastLoginAt: item.lastLoginAt || null,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  }
+}
+
+function ensureAdminUserPassword(value, { required = false } = {}) {
+  const password = String(value || '')
+  if (!password.trim()) {
+    if (required) {
+      const error = new Error('La contraseña es requerida.')
+      error.status = 400
+      throw error
+    }
+    return null
+  }
+
+  if (password.length < 6) {
+    const error = new Error('La contraseña debe tener al menos 6 caracteres.')
+    error.status = 400
+    throw error
+  }
+
+  return password
+}
+
+function toAdminUserCreateInput(body = {}) {
+  const nombre = String(body.nombre || '').trim()
+  const email = sanitizeEmail(body.email || '')
+  const role = normalizeAdminUserRole(body.rol || 'admin')
+  const state = normalizeAdminUserState(body.estado || 'activo')
+  const password = ensureAdminUserPassword(body.password, { required: true })
+
+  const missing = []
+  if (!nombre) missing.push('nombre')
+  if (!email) missing.push('email')
+  if (!password) missing.push('password')
+  if (missing.length) {
+    const error = new Error(`Faltan campos requeridos: ${missing.join(', ')}`)
+    error.status = 400
+    throw error
+  }
+
+  if (!isValidEmail(email)) {
+    const error = new Error('Email inválido.')
+    error.status = 400
+    throw error
+  }
+
+  return {
+    nombre,
+    email,
+    rol: role,
+    estado: state,
+    passwordHash: hashAdminUserPassword(password),
+  }
+}
+
+function toAdminUserUpdateInput(body = {}) {
+  const data = {}
+
+  if (Object.prototype.hasOwnProperty.call(body, 'nombre')) {
+    const nombre = String(body.nombre || '').trim()
+    if (!nombre) {
+      const error = new Error('El nombre no puede estar vacío.')
+      error.status = 400
+      throw error
+    }
+    data.nombre = nombre
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'email')) {
+    const email = sanitizeEmail(body.email || '')
+    if (!email || !isValidEmail(email)) {
+      const error = new Error('Email inválido.')
+      error.status = 400
+      throw error
+    }
+    data.email = email
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'rol')) {
+    const rol = normalizeAdminUserRole(body.rol || 'admin')
+    data.rol = rol
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'estado')) {
+    const estado = normalizeAdminUserState(body.estado || 'activo')
+    data.estado = estado
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'password')) {
+    const password = ensureAdminUserPassword(body.password, { required: false })
+    if (password) {
+      data.passwordHash = hashAdminUserPassword(password)
+    }
+  }
+
+  return data
+}
+
+function isAdminUsersTableMissingError(error) {
+  if (error?.code === 'P2021') return true
+  const message = String(error?.message || '').toLowerCase()
+  return message.includes('admin_users')
+}
+
+async function ensureAdminUsersTableReady({ force = false } = {}) {
+  if (!force && adminUsersTableEnsured) return
+  if (adminUsersTableEnsurePromise) {
+    await adminUsersTableEnsurePromise
+    return
+  }
+
+  adminUsersTableEnsurePromise = (async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`admin_users\` (
+        \`id\` VARCHAR(191) NOT NULL,
+        \`nombre\` VARCHAR(191) NOT NULL,
+        \`email\` VARCHAR(191) NOT NULL,
+        \`password_hash\` VARCHAR(255) NOT NULL,
+        \`rol\` VARCHAR(32) NOT NULL DEFAULT 'admin',
+        \`estado\` VARCHAR(32) NOT NULL DEFAULT 'activo',
+        \`last_login_at\` DATETIME(3) NULL,
+        \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`admin_users_email_key\` (\`email\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `)
+    adminUsersTableEnsured = true
+  })()
+    .finally(() => {
+      adminUsersTableEnsurePromise = null
+    })
+
+  await adminUsersTableEnsurePromise
+}
+
+async function withAdminUsersTableReady(operation) {
+  try {
+    return await operation()
+  } catch (error) {
+    if (!isAdminUsersTableMissingError(error)) throw error
+    await ensureAdminUsersTableReady({ force: true })
+    return operation()
+  }
+}
+
+async function ensureBootstrapAdminUser({ force = false } = {}) {
+  if (!force && bootstrapAdminEnsured) return
+  if (bootstrapAdminEnsurePromise) {
+    await bootstrapAdminEnsurePromise
+    return
+  }
+
+  bootstrapAdminEnsurePromise = (async () => {
+    await ensureAdminUsersTableReady()
+
+    const existing = await withAdminUsersTableReady(() => prisma.adminUser.findUnique({
+      where: { email: BOOTSTRAP_ADMIN.email },
+    }))
+
+    if (!existing) {
+      await withAdminUsersTableReady(() => prisma.adminUser.create({
+        data: {
+          nombre: BOOTSTRAP_ADMIN.nombre,
+          email: BOOTSTRAP_ADMIN.email,
+          rol: normalizeAdminUserRole(BOOTSTRAP_ADMIN.rol),
+          estado: 'activo',
+          passwordHash: hashAdminUserPassword(BOOTSTRAP_ADMIN.password),
+        },
+      }))
+      console.log('[startup] bootstrap admin seeded in admin_users')
+    } else {
+      const nextRole = normalizeAdminUserRole(BOOTSTRAP_ADMIN.rol)
+      const passwordChanged = !verifyAdminUserPassword(BOOTSTRAP_ADMIN.password, existing.passwordHash || '')
+      const requiresUpdate = (
+        String(existing.nombre || '') !== BOOTSTRAP_ADMIN.nombre
+        || String(existing.rol || '') !== nextRole
+        || String(existing.estado || '') !== 'activo'
+        || passwordChanged
+      )
+
+      if (requiresUpdate) {
+        await withAdminUsersTableReady(() => prisma.adminUser.update({
+          where: { id: existing.id },
+          data: {
+            nombre: BOOTSTRAP_ADMIN.nombre,
+            rol: nextRole,
+            estado: 'activo',
+            ...(passwordChanged ? { passwordHash: hashAdminUserPassword(BOOTSTRAP_ADMIN.password) } : {}),
+          },
+        }))
+        console.log('[startup] bootstrap admin synced from env vars')
+      }
+    }
+
+    bootstrapAdminEnsured = true
+  })()
+    .finally(() => {
+      bootstrapAdminEnsurePromise = null
+    })
+
+  await bootstrapAdminEnsurePromise
+}
+
+async function getAdminUserByEmail(email) {
+  const normalized = sanitizeEmail(email || '')
+  if (!normalized) return null
+  return withAdminUsersTableReady(() => prisma.adminUser.findUnique({
+    where: { email: normalized },
+  }))
+}
+
+async function getAdminUserById(id) {
+  const normalized = String(id || '').trim()
+  if (!normalized) return null
+  return withAdminUsersTableReady(() => prisma.adminUser.findUnique({
+    where: { id: normalized },
+  }))
+}
+
+async function countActiveSuperadmins() {
+  return withAdminUsersTableReady(() => prisma.adminUser.count({
+    where: {
+      rol: 'superadmin',
+      estado: 'activo',
+    },
+  }))
 }
 
 function enforceCaregiverSignupRateLimit(req) {
@@ -1733,19 +2050,78 @@ app.post('/api/admin/auth/login', asyncHandler(async (req, res) => {
     throw error
   }
 
-  const account = ADMIN_LOGIN_USERS.find((item) => item.email === email && item.password === password)
+  let account = null
+  let tableError = null
+
+  try {
+    await ensureBootstrapAdminUser()
+    account = await getAdminUserByEmail(email)
+  } catch (error) {
+    tableError = error
+    console.error(`[auth] admin login db lookup failed: ${error.message}`)
+  }
+
+  const bootstrapCredentialsMatch = (
+    email === BOOTSTRAP_ADMIN.email
+    && secureTextEquals(password, BOOTSTRAP_ADMIN.password)
+  )
+
+  if (!account && bootstrapCredentialsMatch) {
+    try {
+      await ensureBootstrapAdminUser({ force: true })
+      account = await getAdminUserByEmail(email)
+      tableError = null
+    } catch (error) {
+      tableError = error
+    }
+  }
+
+  if (!account && bootstrapCredentialsMatch && tableError) {
+    account = {
+      id: `bootstrap-${slugifyName(BOOTSTRAP_ADMIN.email) || 'admin'}`,
+      nombre: BOOTSTRAP_ADMIN.nombre || 'Administrador',
+      email: BOOTSTRAP_ADMIN.email,
+      rol: normalizeAdminRole(BOOTSTRAP_ADMIN.rol),
+      estado: 'activo',
+      passwordHash: BOOTSTRAP_ADMIN.password,
+      source: 'bootstrap-fallback',
+    }
+  }
+
   if (!account) {
     const error = new Error('Credenciales inválidas.')
     error.status = 401
     throw error
   }
 
+  if (normalizeAdminUserState(account.estado || 'activo') !== 'activo') {
+    const error = new Error('Tu usuario está inactivo.')
+    error.status = 403
+    throw error
+  }
+
+  if (!verifyAdminUserPassword(password, account.passwordHash || '')) {
+    const error = new Error('Credenciales inválidas.')
+    error.status = 401
+    throw error
+  }
+
   const user = {
-    id: `adm-${slugifyName(account.email) || 'admin'}`,
+    id: account.id || `adm-${slugifyName(account.email) || 'admin'}`,
     nombre: account.nombre || 'Administrador',
     email: account.email,
-    rol: normalizeAdminRole(account.rol || 'superadmin'),
+    rol: normalizeAdminRole(account.rol || 'admin'),
   }
+
+  if (!String(account.source || '').includes('fallback')) {
+    withAdminUsersTableReady(() => prisma.adminUser.update({
+      where: { id: account.id },
+      data: { lastLoginAt: new Date() },
+    })).catch((error) => {
+      console.error(`[auth] admin lastLoginAt update failed: ${error.message}`)
+    })
+  }
+
   const session = createAdminSession(req, res, user)
 
   res.json({
@@ -1772,6 +2148,137 @@ app.get('/api/admin/auth/me', asyncHandler(async (req, res) => {
 
 app.post('/api/admin/auth/logout', asyncHandler(async (req, res) => {
   clearAdminSession(req, res)
+  res.status(204).send()
+}))
+
+app.get('/api/admin/usuarios', requireSuperadmin, asyncHandler(async (_req, res) => {
+  await ensureBootstrapAdminUser()
+  const rows = await withAdminUsersTableReady(() => prisma.adminUser.findMany({
+    orderBy: [
+      { rol: 'desc' },
+      { nombre: 'asc' },
+    ],
+  }))
+  res.json(rows.map(mapAdminUser))
+}))
+
+app.post('/api/admin/usuarios', requireSuperadmin, asyncHandler(async (req, res) => {
+  const data = toAdminUserCreateInput(req.body || {})
+
+  let created = null
+  try {
+    created = await withAdminUsersTableReady(() => prisma.adminUser.create({ data }))
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      const conflict = new Error('Ya existe un usuario con ese email.')
+      conflict.status = 409
+      throw conflict
+    }
+    throw error
+  }
+
+  res.status(201).json(mapAdminUser(created))
+}))
+
+app.put('/api/admin/usuarios/:id', requireSuperadmin, asyncHandler(async (req, res) => {
+  const id = String(req.params?.id || '').trim()
+  if (!id) {
+    const error = new Error('ID inválido.')
+    error.status = 400
+    throw error
+  }
+
+  const current = await getAdminUserById(id)
+  if (!current) {
+    const error = new Error('Usuario no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const data = toAdminUserUpdateInput(req.body || {})
+  if (!Object.keys(data).length) {
+    res.json(mapAdminUser(current))
+    return
+  }
+
+  const requesterId = String(req.adminUser?.id || '').trim()
+  const nextRole = normalizeAdminUserRole(data.rol ?? current.rol)
+  const nextState = normalizeAdminUserState(data.estado ?? current.estado)
+  const currentIsSuperadmin = normalizeAdminUserRole(current.rol || 'admin') === 'superadmin'
+  const losesSuperadminAccess = currentIsSuperadmin && (nextRole !== 'superadmin' || nextState !== 'activo')
+
+  if (requesterId && requesterId === current.id && losesSuperadminAccess) {
+    const error = new Error('No podés quitarte permisos superadmin en tu propia sesión.')
+    error.status = 400
+    throw error
+  }
+
+  if (losesSuperadminAccess) {
+    const activeSuperadmins = await countActiveSuperadmins()
+    if (activeSuperadmins <= 1) {
+      const error = new Error('Debe quedar al menos un superadmin activo.')
+      error.status = 400
+      throw error
+    }
+  }
+
+  let updated = null
+  try {
+    updated = await withAdminUsersTableReady(() => prisma.adminUser.update({
+      where: { id: current.id },
+      data,
+    }))
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      const conflict = new Error('Ya existe un usuario con ese email.')
+      conflict.status = 409
+      throw conflict
+    }
+    throw error
+  }
+
+  res.json(mapAdminUser(updated))
+}))
+
+app.delete('/api/admin/usuarios/:id', requireSuperadmin, asyncHandler(async (req, res) => {
+  const id = String(req.params?.id || '').trim()
+  if (!id) {
+    const error = new Error('ID inválido.')
+    error.status = 400
+    throw error
+  }
+
+  const current = await getAdminUserById(id)
+  if (!current) {
+    const error = new Error('Usuario no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const requesterId = String(req.adminUser?.id || '').trim()
+  if (requesterId && requesterId === current.id) {
+    const error = new Error('No podés eliminar tu propio usuario.')
+    error.status = 400
+    throw error
+  }
+
+  const isActiveSuperadmin = (
+    normalizeAdminUserRole(current.rol || 'admin') === 'superadmin'
+    && normalizeAdminUserState(current.estado || 'activo') === 'activo'
+  )
+  if (isActiveSuperadmin) {
+    const activeSuperadmins = await countActiveSuperadmins()
+    if (activeSuperadmins <= 1) {
+      const error = new Error('Debe quedar al menos un superadmin activo.')
+      error.status = 400
+      throw error
+    }
+  }
+
+  await withAdminUsersTableReady(() => prisma.adminUser.delete({
+    where: { id: current.id },
+  }))
+
   res.status(204).send()
 }))
 
@@ -3597,8 +4104,8 @@ async function start() {
   console.log(`[startup] env=${process.env.NODE_ENV || 'development'}`)
   console.log(`[startup] port=${PORT}`)
   console.log(`[startup] host=${HOST}`)
-  console.log(`[startup] admin auth enabled=yes users=${ADMIN_LOGIN_USERS.length} apiKeys=${ADMIN_API_KEYS.length}`)
-  if (ADMIN_LOGIN_USERS.some((item) => item.source === 'fallback')) {
+  console.log(`[startup] admin auth enabled=yes bootstrap=${BOOTSTRAP_ADMIN.email} apiKeys=${ADMIN_API_KEYS.length}`)
+  if (BOOTSTRAP_ADMIN.source === 'fallback') {
     console.warn('[startup] admin login usando credenciales fallback. Configurá ADMIN_LOGIN_EMAIL y ADMIN_LOGIN_PASSWORD en producción.')
   }
   if (ADMIN_SESSION_SECRET_IS_EPHEMERAL) {
@@ -3623,6 +4130,11 @@ async function start() {
         await ensureFinanceMovementNotasColumnCapacity()
       } catch (schemaError) {
         console.error(`[startup] finance notas column check failed: ${schemaError.message}`)
+      }
+      try {
+        await ensureBootstrapAdminUser()
+      } catch (schemaError) {
+        console.error(`[startup] bootstrap admin ensure failed: ${schemaError.message}`)
       }
     } catch (error) {
       dbHealth.connected = false
