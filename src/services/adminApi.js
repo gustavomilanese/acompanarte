@@ -3,6 +3,8 @@ const API_BASE_URL = import.meta.env.VITE_API_URL
 const GET_CACHE_TTL_MS = 30_000
 const responseCache = new Map()
 const STORAGE_PREFIX = 'acom-admin-cache:v2:'
+const ADMIN_TOKEN_STORAGE_KEY = 'acom_admin_api_token'
+const ADMIN_API_TOKEN = String(import.meta.env.VITE_ADMIN_API_TOKEN || '').trim()
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -68,12 +70,21 @@ function writePersistedCache(cacheKey, data, expiresAt) {
   }
 }
 
+function getAdminApiToken() {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const runtimeToken = String(window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '').trim()
+    if (runtimeToken) return runtimeToken
+  }
+  return ADMIN_API_TOKEN
+}
+
 async function request(path, options = {}) {
   const {
     useCache = true,
     forceFresh = false,
     cacheTtl = GET_CACHE_TTL_MS,
     cloneResponse = true,
+    headers: requestHeaders,
     ...fetchOptions
   } = options
   const method = String(options.method || 'GET').toUpperCase()
@@ -104,10 +115,22 @@ async function request(path, options = {}) {
   }
 
   const buildFetchOptions = () => ({
-    headers: {
-      'Content-Type': 'application/json',
-      ...(fetchOptions.headers || {}),
-    },
+    headers: (() => {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(requestHeaders || {}),
+      }
+      if (path.startsWith('/api/admin/')) {
+        const adminToken = getAdminApiToken()
+        if (adminToken) {
+          headers['x-admin-token'] = adminToken
+          if (!headers.Authorization) {
+            headers.Authorization = `Bearer ${adminToken}`
+          }
+        }
+      }
+      return headers
+    })(),
     cache: 'no-store',
     ...fetchOptions,
   })
@@ -159,7 +182,10 @@ async function request(path, options = {}) {
     }
 
     if (!response.ok) {
-      const message = payload?.error || 'Error de comunicación con el servidor'
+      let message = payload?.error || 'Error de comunicación con el servidor'
+      if (response.status === 401 && path.startsWith('/api/admin/') && !getAdminApiToken()) {
+        message = 'No autorizado. Configura VITE_ADMIN_API_TOKEN para acceder a las rutas admin.'
+      }
       throw new Error(message)
     }
 
@@ -195,6 +221,17 @@ async function request(path, options = {}) {
 }
 
 export const adminApi = {
+  setAdminApiToken(token) {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    const normalized = String(token || '').trim()
+    if (!normalized) {
+      window.localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY)
+      clearRequestCache()
+      return
+    }
+    window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, normalized)
+    clearRequestCache()
+  },
   getAcompanantes(scope = 'activos') {
     const normalizedScope = encodeURIComponent(String(scope || 'activos').trim().toLowerCase())
     return request(`/api/admin/acompanantes?scope=${normalizedScope}`)

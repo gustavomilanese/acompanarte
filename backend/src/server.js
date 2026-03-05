@@ -95,6 +95,17 @@ const dbHealth = {
   connected: false,
   error: null,
 }
+const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim()
+const ADMIN_API_KEYS = new Set(
+  String(process.env.ADMIN_API_KEYS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+)
+if (ADMIN_API_KEY) {
+  ADMIN_API_KEYS.add(ADMIN_API_KEY)
+}
+const ADMIN_AUTH_ENABLED = ADMIN_API_KEYS.size > 0
 
 app.use(cors({
   origin(origin, callback) {
@@ -106,6 +117,36 @@ app.use(cors({
   },
 }))
 app.use(express.json({ limit: '20mb' }))
+
+function extractAdminAuthToken(req) {
+  const authHeader = String(req.headers.authorization || '').trim()
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim()
+  }
+  return String(req.headers['x-admin-token'] || '').trim()
+}
+
+function requireAdminAuth(req, res, next) {
+  if (!ADMIN_AUTH_ENABLED || req.method === 'OPTIONS') {
+    next()
+    return
+  }
+
+  const token = extractAdminAuthToken(req)
+  if (!token) {
+    res.status(401).json({ error: 'No autorizado. Falta token admin.' })
+    return
+  }
+
+  if (!ADMIN_API_KEYS.has(token)) {
+    res.status(401).json({ error: 'No autorizado. Token admin invalido.' })
+    return
+  }
+
+  next()
+}
+
+app.use('/api/admin', requireAdminAuth)
 
 function mapCaregiver(item) {
   return {
@@ -3260,6 +3301,10 @@ async function start() {
   console.log(`[startup] env=${process.env.NODE_ENV || 'development'}`)
   console.log(`[startup] port=${PORT}`)
   console.log(`[startup] host=${HOST}`)
+  console.log(`[startup] admin auth=${ADMIN_AUTH_ENABLED ? 'enabled' : 'disabled'}`)
+  if (!ADMIN_AUTH_ENABLED) {
+    console.warn('[startup] ADMIN_API_KEY(S) no configurada. /api/admin queda sin proteccion.')
+  }
 
   if (!DATABASE_URL) {
     console.warn('[startup] DATABASE_URL no está configurada. Las rutas con base de datos van a fallar.')

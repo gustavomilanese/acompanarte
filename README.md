@@ -59,6 +59,7 @@ PORT=4000
 CORS_ORIGIN=http://localhost:5173,http://localhost:5174
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
+ADMIN_API_KEY=poner-un-token-largo-unico
 ```
 
 ### 3.3 Aplicar esquema en DB local
@@ -92,6 +93,7 @@ VITE_API_URL=http://localhost:4000
 Archivo `.env.production`
 ```env
 VITE_API_URL=https://acompanarte-production.up.railway.app
+VITE_ADMIN_API_TOKEN=poner-el-mismo-token-que-en-backend
 ```
 
 ## 5) Deploy a Hostinger (produccion)
@@ -106,6 +108,7 @@ Variables de entorno:
 ```env
 DATABASE_URL=mysql://...@DB_HOST_REAL:3306/uXXXXXXXX_acompanarte2
 CORS_ORIGIN=https://app.acompanarte.online,https://www.app.acompanarte.online
+ADMIN_API_KEY=poner-un-token-largo-unico
 ```
 
 Notas:
@@ -121,8 +124,10 @@ npm run backend:package
 El frontend toma `VITE_API_URL` en build. Si usas GitHub Actions, el workflow ya buildéa con:
 ```env
 VITE_API_URL=https://acompanarte-production.up.railway.app
+VITE_ADMIN_API_TOKEN=${VITE_ADMIN_API_TOKEN}
 ```
 Tambien puedes definir `VITE_API_URL` como Repository Variable en GitHub si luego cambias la URL del backend.
+Para proteger `/api/admin/*`, define tambien `VITE_ADMIN_API_TOKEN` (Secret o Variable) con el mismo valor que `ADMIN_API_KEY` del backend.
 - No hace falta subir manualmente.
 - Se despliega solo desde GitHub Actions cuando haces push a `main`.
 
@@ -180,3 +185,4 @@ Cache viejo del service worker. Hacer:
 - No commitear secretos.
 - Rotar API keys si se exponen.
 - Mantener `backend/.env` fuera de git.
+- `/api/admin/*` solo queda protegido si `ADMIN_API_KEY` (o `ADMIN_API_KEYS`) esta configurado en backend.

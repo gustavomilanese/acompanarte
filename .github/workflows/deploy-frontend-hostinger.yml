@@ -34,6 +34,7 @@ jobs:
       - name: Build frontend
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL || 'https://acompanarte-production.up.railway.app' }}
+          VITE_ADMIN_API_TOKEN: ${{ secrets.VITE_ADMIN_API_TOKEN || vars.VITE_ADMIN_API_TOKEN || '' }}
         run: npm run build
 
       - name: Install lftp
