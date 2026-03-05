@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 import cors from 'cors'
@@ -95,17 +96,23 @@ const dbHealth = {
   connected: false,
   error: null,
 }
-const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim()
-const ADMIN_API_KEYS = new Set(
-  String(process.env.ADMIN_API_KEYS || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
+const ADMIN_SESSION_COOKIE_NAME = String(process.env.ADMIN_SESSION_COOKIE_NAME || 'acom_admin_session').trim() || 'acom_admin_session'
+const ADMIN_SESSION_TTL_HOURS = Math.max(
+  1,
+  Number.parseInt(String(process.env.ADMIN_SESSION_TTL_HOURS || '12'), 10) || 12,
 )
-if (ADMIN_API_KEY) {
-  ADMIN_API_KEYS.add(ADMIN_API_KEY)
-}
-const ADMIN_AUTH_ENABLED = ADMIN_API_KEYS.size > 0
+const ADMIN_SESSION_TTL_MS = ADMIN_SESSION_TTL_HOURS * 60 * 60 * 1000
+const ADMIN_SESSION_SECRET_RAW = String(process.env.ADMIN_SESSION_SECRET || '').trim()
+const ADMIN_SESSION_SECRET = ADMIN_SESSION_SECRET_RAW || crypto.randomBytes(32).toString('hex')
+const ADMIN_SESSION_SECRET_IS_EPHEMERAL = !ADMIN_SESSION_SECRET_RAW
+const ADMIN_API_KEYS = parseAdminApiKeys(process.env.ADMIN_API_KEY, process.env.ADMIN_API_KEYS)
+const ADMIN_LOGIN_USERS = resolveAdminLoginUsers()
+const ADMIN_AUTH_OPEN_PATHS = new Set([
+  '/auth/login',
+  '/auth/me',
+  '/auth/logout',
+])
+const adminSessionStore = new Map()
 
 app.use(cors({
   origin(origin, callback) {
@@ -115,34 +122,271 @@ app.use(cors({
     }
     callback(new Error(`Origen no permitido por CORS: ${origin}`))
   },
+  credentials: true,
 }))
 app.use(express.json({ limit: '20mb' }))
+
+function normalizeAdminRole(value = 'superadmin') {
+  return String(value || '').trim().toLowerCase() === 'admin' ? 'admin' : 'superadmin'
+}
+
+function parseAdminApiKeys(...inputs) {
+  const entries = []
+  inputs.forEach((raw) => {
+    if (!raw) return
+    String(raw)
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((item) => entries.push(item))
+  })
+  return [...new Set(entries)]
+}
+
+function resolveAdminLoginUsers() {
+  const configuredEmail = sanitizeEmail(process.env.ADMIN_LOGIN_EMAIL || '')
+  const configuredPassword = String(process.env.ADMIN_LOGIN_PASSWORD || '').trim()
+  const configuredName = String(process.env.ADMIN_LOGIN_NAME || 'Administrador').trim() || 'Administrador'
+  const configuredRole = normalizeAdminRole(process.env.ADMIN_LOGIN_ROLE || 'superadmin')
+
+  if (configuredEmail && configuredPassword) {
+    return [{
+      email: configuredEmail,
+      password: configuredPassword,
+      nombre: configuredName,
+      rol: configuredRole,
+      source: 'env',
+    }]
+  }
+
+  return [{
+    email: 'admin@acompanarte.online',
+    password: 'admin123',
+    nombre: 'Administrador',
+    rol: 'superadmin',
+    source: 'fallback',
+  }]
+}
+
+function parseCookies(req) {
+  const rawCookies = String(req.headers.cookie || '')
+  if (!rawCookies) return {}
+
+  const cookies = {}
+  rawCookies.split(';').forEach((chunk) => {
+    const separator = chunk.indexOf('=')
+    if (separator <= 0) return
+    const key = chunk.slice(0, separator).trim()
+    const value = chunk.slice(separator + 1).trim()
+    if (!key) return
+
+    try {
+      cookies[key] = decodeURIComponent(value)
+    } catch {
+      cookies[key] = value
+    }
+  })
+
+  return cookies
+}
+
+function getRequestIsHttps(req) {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+  return Boolean(req.secure || forwardedProto === 'https')
+}
+
+function getAdminCookieOptions(req) {
+  const secure = getRequestIsHttps(req)
+  return {
+    path: '/',
+    httpOnly: true,
+    secure,
+    sameSite: secure ? 'None' : 'Lax',
+  }
+}
+
+function serializeCookie(name, value, options = {}) {
+  const parts = [`${name}=${encodeURIComponent(value ?? '')}`]
+  parts.push(`Path=${options.path || '/'}`)
+
+  if (options.maxAgeMs !== undefined) {
+    const maxAgeSeconds = Math.max(0, Math.floor(Number(options.maxAgeMs) / 1000))
+    parts.push(`Max-Age=${maxAgeSeconds}`)
+  }
+
+  if (options.httpOnly !== false) parts.push('HttpOnly')
+  if (options.secure) parts.push('Secure')
+  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`)
+
+  return parts.join('; ')
+}
+
+function appendSetCookieHeader(res, value) {
+  const current = res.getHeader('Set-Cookie')
+  if (!current) {
+    res.setHeader('Set-Cookie', value)
+    return
+  }
+  if (Array.isArray(current)) {
+    res.setHeader('Set-Cookie', [...current, value])
+    return
+  }
+  res.setHeader('Set-Cookie', [current, value])
+}
+
+function signAdminSessionId(sessionId) {
+  return crypto
+    .createHmac('sha256', ADMIN_SESSION_SECRET)
+    .update(sessionId)
+    .digest('base64url')
+}
+
+function secureTextEquals(a, b) {
+  const left = Buffer.from(String(a || ''))
+  const right = Buffer.from(String(b || ''))
+  if (left.length !== right.length || left.length === 0) return false
+  return crypto.timingSafeEqual(left, right)
+}
+
+function pruneAdminSessions() {
+  const now = Date.now()
+  adminSessionStore.forEach((session, sessionId) => {
+    if (!session || session.expiresAt <= now) {
+      adminSessionStore.delete(sessionId)
+    }
+  })
+}
 
 function extractAdminAuthToken(req) {
   const authHeader = String(req.headers.authorization || '').trim()
   if (authHeader.toLowerCase().startsWith('bearer ')) {
-    return authHeader.slice(7).trim()
+    const token = authHeader.slice(7).trim()
+    if (token) return token
   }
-  return String(req.headers['x-admin-token'] || '').trim()
+
+  const customHeader = String(req.headers['x-admin-token'] || '').trim()
+  if (customHeader) return customHeader
+  return null
+}
+
+function resolveAdminApiTokenAuth(req) {
+  if (!ADMIN_API_KEYS.length) return null
+
+  const token = extractAdminAuthToken(req)
+  if (!token || !ADMIN_API_KEYS.includes(token)) return null
+
+  return {
+    source: 'api-key',
+    expiresAt: null,
+    user: {
+      id: 'admin-api-key',
+      nombre: 'Administrador',
+      email: 'admin-api-key@acompanarte.local',
+      rol: 'superadmin',
+    },
+  }
+}
+
+function resolveSignedAdminSession(rawToken) {
+  if (!rawToken) return null
+  const separatorIndex = String(rawToken).lastIndexOf('.')
+  if (separatorIndex <= 0) return null
+
+  const sessionId = rawToken.slice(0, separatorIndex)
+  const signature = rawToken.slice(separatorIndex + 1)
+  if (!sessionId || !signature) return null
+
+  const expectedSignature = signAdminSessionId(sessionId)
+  if (!secureTextEquals(signature, expectedSignature)) return null
+
+  const session = adminSessionStore.get(sessionId)
+  if (!session) return null
+  if (session.expiresAt <= Date.now()) {
+    adminSessionStore.delete(sessionId)
+    return null
+  }
+
+  return {
+    source: 'session',
+    sessionId,
+    expiresAt: session.expiresAt,
+    user: session.user,
+  }
+}
+
+function resolveAdminSessionAuth(req) {
+  const cookies = parseCookies(req)
+  return resolveSignedAdminSession(cookies[ADMIN_SESSION_COOKIE_NAME] || '')
+}
+
+function resolveAdminRequestAuth(req) {
+  pruneAdminSessions()
+  return resolveAdminSessionAuth(req) || resolveAdminApiTokenAuth(req)
+}
+
+function clearAdminSessionCookie(req, res) {
+  const cookieOptions = getAdminCookieOptions(req)
+  appendSetCookieHeader(res, serializeCookie(
+    ADMIN_SESSION_COOKIE_NAME,
+    '',
+    {
+      ...cookieOptions,
+      maxAgeMs: 0,
+    },
+  ))
+}
+
+function createAdminSession(req, res, user) {
+  pruneAdminSessions()
+
+  const sessionId = crypto.randomBytes(24).toString('base64url')
+  const signature = signAdminSessionId(sessionId)
+  const token = `${sessionId}.${signature}`
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS
+
+  adminSessionStore.set(sessionId, {
+    user,
+    expiresAt,
+  })
+
+  const cookieOptions = getAdminCookieOptions(req)
+  appendSetCookieHeader(res, serializeCookie(
+    ADMIN_SESSION_COOKIE_NAME,
+    token,
+    {
+      ...cookieOptions,
+      maxAgeMs: ADMIN_SESSION_TTL_MS,
+    },
+  ))
+
+  return { expiresAt }
+}
+
+function clearAdminSession(req, res) {
+  const auth = resolveAdminSessionAuth(req)
+  if (auth?.sessionId) {
+    adminSessionStore.delete(auth.sessionId)
+  }
+  clearAdminSessionCookie(req, res)
 }
 
 function requireAdminAuth(req, res, next) {
-  if (!ADMIN_AUTH_ENABLED || req.method === 'OPTIONS') {
+  if (req.method === 'OPTIONS' || ADMIN_AUTH_OPEN_PATHS.has(req.path)) {
     next()
     return
   }
 
-  const token = extractAdminAuthToken(req)
-  if (!token) {
-    res.status(401).json({ error: 'No autorizado. Falta token admin.' })
+  const auth = resolveAdminRequestAuth(req)
+  if (!auth?.user) {
+    res.status(401).json({ error: 'No autorizado. Iniciá sesión nuevamente.' })
     return
   }
 
-  if (!ADMIN_API_KEYS.has(token)) {
-    res.status(401).json({ error: 'No autorizado. Token admin invalido.' })
-    return
-  }
-
+  req.adminUser = auth.user
+  req.adminAuthSource = auth.source
   next()
 }
 
@@ -1478,6 +1722,58 @@ app.get('/api/health', (_req, res) => {
     database: dbHealth,
   })
 })
+
+app.post('/api/admin/auth/login', asyncHandler(async (req, res) => {
+  const email = sanitizeEmail(req.body?.email || '')
+  const password = String(req.body?.password || '')
+
+  if (!email || !password) {
+    const error = new Error('Email y contraseña son requeridos.')
+    error.status = 400
+    throw error
+  }
+
+  const account = ADMIN_LOGIN_USERS.find((item) => item.email === email && item.password === password)
+  if (!account) {
+    const error = new Error('Credenciales inválidas.')
+    error.status = 401
+    throw error
+  }
+
+  const user = {
+    id: `adm-${slugifyName(account.email) || 'admin'}`,
+    nombre: account.nombre || 'Administrador',
+    email: account.email,
+    rol: normalizeAdminRole(account.rol || 'superadmin'),
+  }
+  const session = createAdminSession(req, res, user)
+
+  res.json({
+    authenticated: true,
+    user,
+    expiresAt: new Date(session.expiresAt).toISOString(),
+  })
+}))
+
+app.get('/api/admin/auth/me', asyncHandler(async (req, res) => {
+  const auth = resolveAdminRequestAuth(req)
+  if (!auth?.user) {
+    res.json({ authenticated: false })
+    return
+  }
+
+  res.json({
+    authenticated: true,
+    user: auth.user,
+    source: auth.source,
+    expiresAt: auth.expiresAt ? new Date(auth.expiresAt).toISOString() : null,
+  })
+}))
+
+app.post('/api/admin/auth/logout', asyncHandler(async (req, res) => {
+  clearAdminSession(req, res)
+  res.status(204).send()
+}))
 
 app.post('/api/public/caregiver-signups', asyncHandler(async (req, res) => {
   enforceCaregiverSignupRateLimit(req)
@@ -3301,9 +3597,12 @@ async function start() {
   console.log(`[startup] env=${process.env.NODE_ENV || 'development'}`)
   console.log(`[startup] port=${PORT}`)
   console.log(`[startup] host=${HOST}`)
-  console.log(`[startup] admin auth=${ADMIN_AUTH_ENABLED ? 'enabled' : 'disabled'}`)
-  if (!ADMIN_AUTH_ENABLED) {
-    console.warn('[startup] ADMIN_API_KEY(S) no configurada. /api/admin queda sin proteccion.')
+  console.log(`[startup] admin auth enabled=yes users=${ADMIN_LOGIN_USERS.length} apiKeys=${ADMIN_API_KEYS.length}`)
+  if (ADMIN_LOGIN_USERS.some((item) => item.source === 'fallback')) {
+    console.warn('[startup] admin login usando credenciales fallback. Configurá ADMIN_LOGIN_EMAIL y ADMIN_LOGIN_PASSWORD en producción.')
+  }
+  if (ADMIN_SESSION_SECRET_IS_EPHEMERAL) {
+    console.warn('[startup] ADMIN_SESSION_SECRET no configurado. Las sesiones se invalidan en cada deploy.')
   }
 
   if (!DATABASE_URL) {

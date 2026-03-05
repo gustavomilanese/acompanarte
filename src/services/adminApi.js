@@ -3,8 +3,12 @@ const API_BASE_URL = import.meta.env.VITE_API_URL
 const GET_CACHE_TTL_MS = 30_000
 const responseCache = new Map()
 const STORAGE_PREFIX = 'acom-admin-cache:v2:'
-const ADMIN_TOKEN_STORAGE_KEY = 'acom_admin_api_token'
+const ADMIN_API_TOKEN_STORAGE_KEY = 'acom_admin_api_token'
 const ADMIN_API_TOKEN = String(import.meta.env.VITE_ADMIN_API_TOKEN || '').trim()
+
+function isAdminApiPath(path = '') {
+  return String(path).startsWith('/api/admin')
+}
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -72,7 +76,7 @@ function writePersistedCache(cacheKey, data, expiresAt) {
 
 function getAdminApiToken() {
   if (typeof window !== 'undefined' && window.localStorage) {
-    const runtimeToken = String(window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '').trim()
+    const runtimeToken = String(window.localStorage.getItem(ADMIN_API_TOKEN_STORAGE_KEY) || '').trim()
     if (runtimeToken) return runtimeToken
   }
   return ADMIN_API_TOKEN
@@ -94,6 +98,7 @@ async function request(path, options = {}) {
   const shouldUseCache = method === 'GET' && useCache
   const cacheKey = shouldUseCache ? `${method}:${path}` : null
   const now = Date.now()
+  const adminToken = isAdminApiPath(path) ? getAdminApiToken() : ''
 
   if (shouldUseCache && !forceFresh) {
     const cached = responseCache.get(cacheKey)
@@ -120,18 +125,13 @@ async function request(path, options = {}) {
         'Content-Type': 'application/json',
         ...(requestHeaders || {}),
       }
-      if (path.startsWith('/api/admin/')) {
-        const adminToken = getAdminApiToken()
-        if (adminToken) {
-          headers['x-admin-token'] = adminToken
-          if (!headers.Authorization) {
-            headers.Authorization = `Bearer ${adminToken}`
-          }
-        }
+      if (adminToken && !headers.Authorization && !headers['x-admin-token']) {
+        headers.Authorization = `Bearer ${adminToken}`
       }
       return headers
     })(),
     cache: 'no-store',
+    credentials: 'include',
     ...fetchOptions,
   })
 
@@ -182,10 +182,9 @@ async function request(path, options = {}) {
     }
 
     if (!response.ok) {
-      let message = payload?.error || 'Error de comunicación con el servidor'
-      if (response.status === 401 && path.startsWith('/api/admin/') && !getAdminApiToken()) {
-        message = 'No autorizado. Configura VITE_ADMIN_API_TOKEN para acceder a las rutas admin.'
-      }
+      const message = response.status === 401 && isAdminApiPath(path)
+        ? (payload?.error || 'Sesión expirada. Iniciá sesión de nuevo.')
+        : (payload?.error || 'Error de comunicación con el servidor')
       throw new Error(message)
     }
 
@@ -221,15 +220,41 @@ async function request(path, options = {}) {
 }
 
 export const adminApi = {
+  loginAdmin({ email, password }) {
+    return request('/api/admin/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
+  getAdminSession() {
+    return request('/api/admin/auth/me', {
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
+  logoutAdmin() {
+    return request('/api/admin/auth/logout', {
+      method: 'POST',
+      useCache: false,
+      cloneResponse: false,
+    })
+  },
   setAdminApiToken(token) {
     if (typeof window === 'undefined' || !window.localStorage) return
     const normalized = String(token || '').trim()
     if (!normalized) {
-      window.localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY)
+      window.localStorage.removeItem(ADMIN_API_TOKEN_STORAGE_KEY)
       clearRequestCache()
       return
     }
-    window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, normalized)
+    window.localStorage.setItem(ADMIN_API_TOKEN_STORAGE_KEY, normalized)
+    clearRequestCache()
+  },
+  clearAdminApiToken() {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.removeItem(ADMIN_API_TOKEN_STORAGE_KEY)
     clearRequestCache()
   },
   getAcompanantes(scope = 'activos') {

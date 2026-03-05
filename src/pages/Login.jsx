@@ -52,13 +52,13 @@ export function Login() {
 
       switch (selectedRole) {
         case ROLES.CUIDADOR:
-          result = loginAcompanante(email, code);
+          result = await loginAcompanante(email, code);
           break;
         case ROLES.PACIENTE:
-          result = loginFamiliar(code);
+          result = await loginFamiliar(code);
           break;
         case ROLES.ADMIN:
-          result = loginAdmin(email, password);
+          result = await loginAdmin(email, password);
           break;
         default:
           showError('Selecciona un tipo de usuario');

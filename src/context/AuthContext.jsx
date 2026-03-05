@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { acompanantes, admins, codigosFamiliares, getClienteById } from '@/data/mockData';
+import { adminApi } from '@/services/adminApi';
 
 const AuthContext = createContext(null);
 
@@ -64,6 +65,11 @@ function normalizeRol(rol) {
   return rol;
 }
 
+function isAdminRole(rol) {
+  const normalized = normalizeRol(rol);
+  return normalized === 'admin' || normalized === 'superadmin';
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useLocalStorage('acompanarte_user', null);
   const [appUsers, setAppUsers] = useLocalStorage('acompanarte_users', seedUsers());
@@ -83,8 +89,52 @@ export function AuthProvider({ children }) {
     if (hasChanges) {
       setAppUsers(normalizedUsers);
     }
-    setIsLoading(false);
   }, [appUsers, setAppUsers]);
+
+  useEffect(() => {
+    let active = true;
+
+    const hydrateAdminSession = async () => {
+      const currentUser = user;
+      const shouldCheckSession = !currentUser || isAdminRole(currentUser?.rol);
+
+      if (!shouldCheckSession) {
+        if (active) setIsLoading(false);
+        return;
+      }
+
+      try {
+        const session = await adminApi.getAdminSession();
+        const sessionUser = session?.authenticated ? session.user : null;
+
+        if (!active) return;
+
+        if (sessionUser) {
+          setUser({
+            id: sessionUser.id || `adm-${sessionUser.email || 'admin'}`,
+            userId: sessionUser.id || `adm-${sessionUser.email || 'admin'}`,
+            nombre: sessionUser.nombre || 'Administrador',
+            email: sessionUser.email || '',
+            rol: normalizeRol(sessionUser.rol || 'admin'),
+          });
+        } else if (isAdminRole(currentUser?.rol)) {
+          setUser(null);
+        }
+      } catch {
+        if (active && isAdminRole(currentUser?.rol)) {
+          setUser(null);
+        }
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    hydrateAdminSession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const loginAcompanante = useCallback((email, codigo) => {
     const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -166,30 +216,31 @@ export function AuthProvider({ children }) {
     return { success: false, error: 'Código de acceso incorrecto' };
   }, [setUser, appUsers]);
 
-  const loginAdmin = useCallback((email, password) => {
-    const users = Array.isArray(appUsers) ? appUsers : [];
-    const admin = users.find(
-      (a) =>
-        ['admin', 'superadmin'].includes(a.rol) &&
-        a.estado === 'activo' &&
-        String(a.email || '').trim().toLowerCase() === String(email || '').trim().toLowerCase() &&
-        String(a.password || '') === String(password || '')
-    );
+  const loginAdmin = useCallback(async (email, password) => {
+    try {
+      const response = await adminApi.loginAdmin({
+        email: String(email || '').trim().toLowerCase(),
+        password: String(password || ''),
+      });
 
-    if (admin) {
+      const sessionUser = response?.user;
+      if (!sessionUser) {
+        return { success: false, error: 'No se pudo validar la sesión de administrador.' };
+      }
+
       const userData = {
-        id: admin.id,
-        userId: admin.id,
-        nombre: admin.nombre,
-        email: admin.email,
-        rol: admin.rol,
+        id: sessionUser.id || `adm-${sessionUser.email || 'admin'}`,
+        userId: sessionUser.id || `adm-${sessionUser.email || 'admin'}`,
+        nombre: sessionUser.nombre || 'Administrador',
+        email: sessionUser.email || '',
+        rol: normalizeRol(sessionUser.rol || 'admin'),
       };
       setUser(userData);
       return { success: true, user: userData };
+    } catch (error) {
+      return { success: false, error: error?.message || 'Email o contraseña incorrectos' };
     }
-
-    return { success: false, error: 'Email o contraseña incorrectos' };
-  }, [setUser, appUsers]);
+  }, [setUser]);
 
   const createAppUser = useCallback((payload) => {
     const list = Array.isArray(appUsers) ? appUsers : [];
@@ -270,8 +321,11 @@ export function AuthProvider({ children }) {
   }, [appUsers, setAppUsers, user]);
 
   const logout = useCallback(() => {
+    if (isAdminRole(user?.rol)) {
+      adminApi.logoutAdmin().catch(() => null);
+    }
     setUser(null);
-  }, [setUser]);
+  }, [setUser, user]);
 
   const hasRole = useCallback((...roles) => {
     return user && roles.includes(user.rol);
