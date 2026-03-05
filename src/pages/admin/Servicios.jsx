@@ -95,6 +95,19 @@ function roundMoney(value) {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 }
 
+function formatDateLabel(value) {
+  if (!value) return '-';
+  const raw = String(value).trim();
+  const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    return `${day}/${month}/${year}`;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return '-';
+  return format(parsed, 'dd/MM/yyyy');
+}
+
 function decodeBase64ToText(base64Text) {
   const normalized = String(base64Text || '').replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
@@ -1347,9 +1360,7 @@ export function Servicios() {
                               <tr key={row.id} className="border-t border-amber-100">
                                 <td className="px-3 py-2 text-slate-600">{row.periodLabel}</td>
                                 <td className="px-3 py-2 text-slate-700">{row.caregiverNombre}</td>
-                                <td className="px-3 py-2 text-slate-600">
-                                  {row.fecha ? format(new Date(row.fecha), 'dd/MM/yyyy') : '-'}
-                                </td>
+                                <td className="px-3 py-2 text-slate-600">{formatDateLabel(row.fecha)}</td>
                                 <td className="px-3 py-2 text-slate-700">{Number(row.horas || 0).toLocaleString('es-AR')} hs</td>
                                 <td className="px-3 py-2 text-slate-700">${Number(row.precio || 0).toLocaleString('es-AR')}</td>
                                 <td className="px-3 py-2 text-slate-600">{row.concepto || '-'}</td>
